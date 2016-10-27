@@ -22,6 +22,6 @@ The MCP2551 is a simple chip that interfaces with the CAN bus. This chip is prob
 CAN Bus:
 To build the CAN bus, two 120 ohm resistors are required. These two resistors connect the high and low CAN bus wires at the termination of each end of the bus. At this point, I do not know a limit on the number of nodes that can be added to the bus without significant collisions. I have tested two nodes. If we have more, we could determine the max number that can be added.
 
-I've used 
+I've used the SAINSMART
 
 I will continue to upload the code soon.
