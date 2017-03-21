@@ -1,0 +1,3442 @@
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  1
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00001 ;*******************************************************************
+                    00002 ; Microchip CAN Reference Design
+                    00003 ;
+                    00004 ; Mike Richitelli
+                    00005 ; Diversified Engineering
+                    00006 ; 283 Indian River Road
+                    00007 ; Orange, CT 06477
+                    00008 ; (203)799-7875 fax(203)799-7892
+                    00009 ; WWW.DIVERSIFIEDENGINEERING.NET 
+                    00010 ;
+                    00011 ;*******************************************************************
+                    00012 ;*******************************************************************
+                    00013 
+                    00014           TITLE " CAN_Ref Design "
+                    00015 
+                    00016 ;*******************************************************************
+                    00017 
+  00000001          00018 dVersion       equ  1
+  00000005          00019 dRelease       equ  5
+                    00020 
+                    00021 ;======================================================================
+                    00022 ; Transmits CAN message every 131 mSec.  Message contains two data bytes
+                    00023 ;         that represent a 12 bit value with least significant byte
+                    00024 ;         sent first.
+                    00025 ; Cycles between three outputs:
+                    00026 ;         Pot:  Value goes from 0 to 0xFF0 as Pot is turned clockwise.
+                    00027 ;               ID is selected from DIP switches #3 and #4 as follows:
+                    00028 ;                   #3 #4  ID
+                    00029 ;                   0  0   transmission disabled 
+                    00030 ;                   0  1   0x100
+                    00031 ;                   1  0   0x200
+                    00032 ;                   1  1   0x300
+                    00033 ;
+                    00034 ;         Push button switch: Switch open => 0, Switch closed => 0xFFF   
+                    00035 ;               ID is Pot ID + 0x010
+                    00036 ;
+                    00037 ;         CdS:  Value goes from 0 to 0xFF0 as Pot is turned clockwise.
+                    00038 ;               ID is Pot ID + 0x020
+                    00039 ;
+                    00040 ; CAN messages received are assumed to be 12 bit data sent as two bytes, 
+                    00041 ;         least significant byte first.
+                    00042 ;
+                    00043 ;         The base ID for receiving CAN messages is specified by DIP 
+                    00044 ;         switches #1 and #2:
+                    00045 ;                   #1 #2  ID
+                    00046 ;                   0  0   0x000
+                    00047 ;                   0  1   0x100
+                    00048 ;                   1  0   0x200
+                    00049 ;                   1  1   0x300
+                    00050 ;
+                    00051 ;         Lamp: If the message ID matches the ID selected by the DIP 
+                    00052 ;               switches the 12 bit data is used to generate a PWM output 
+                    00053 ;               where a 0 value gives a zero duty cycle and 0xFFF generates 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  2
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00054 ;               a 100% duty cycle.  The lamp output is proportional to
+                    00055 ;               the duty cycle.
+                    00056 ;               ID is Base ID
+                    00057 ;
+                    00058 ;         LED: On if value received is >= 0x800 and off if < 0x800.
+                    00059 ;               ID is Base ID + 0x010
+                    00060 ;
+                    00061 ;======================================================================
+                    00062 
+                    00063 ;----- PIC16F876 Micro -----;
+                    00064 
+                    00065           LIST P=16F876
+                    00066           LIST r=dec,x=on,t=off
+                    00067 
+                    00068 #include "P16F876.INC"
+                    00001         LIST
+                    00002 ; P16F876.INC  Standard Header File, Version 1.00    Microchip Technology, Inc.
+                    00358         LIST
+                    00069 
+2007 3F72           00070   __CONFIG _BODEN_ON&_CP_OFF&_WRT_ENABLE_ON&_PWRTE_ON&_WDT_OFF&_HS_OSC&_DEBUG_OFF&_CPD_OFF&_LVP_OFF
+2000 0000 0001 0000 00071   __IDLOCS (dVersion<<8)|dRelease  ; version: vvrr , vv- version, rr - release
+     0005 
+                    00072 
+                    00073 ;---------------------------;
+                    00074 
+                    00075 #include "MACROS16.INC"
+                    00001 ;Basic macros for PIC16C series
+                    00002 ;6/20/98
+                    00003 
+                    00004 #ifdef __16C77
+                    00005 #define _COMMONBANK  ; use common upper 16 bytes in 4 banks
+                    00006 #endif
+                    00007 #ifdef __16C76
+                    00008 #define _COMMONBANK  ; use common upper 16 bytes in 4 banks
+                    00009 #endif
+                    00010 
+  00000001          00011 TRUE            equ     1
+  00000000          00012 FALSE           equ     0  
+                    00013 
+                    00014 ; Page 1 register definitions to avoid page warning
+                    00015 
+  00000001          00016 OPTION_REG_P                 EQU     H'0081'-0x80
+  00000005          00017 TRISA_P                      EQU     H'0085'-0x80
+  00000006          00018 TRISB_P                      EQU     H'0086'-0x80
+  00000007          00019 TRISC_P                      EQU     H'0087'-0x80
+  00000008          00020 TRISD_P                      EQU     H'0088'-0x80
+  00000009          00021 TRISE_P                      EQU     H'0089'-0x80
+  0000000C          00022 PIE1_P                       EQU     H'008C'-0x80
+  0000000D          00023 PIE2_P                       EQU     H'008D'-0x80
+  0000000E          00024 PCON_P                       EQU     H'008E'-0x80
+  00000012          00025 PR2_P                        EQU     H'0092'-0x80
+  00000013          00026 SSPADD_P                     EQU     H'0093'-0x80
+  00000014          00027 SSPSTAT_P                    EQU     H'0094'-0x80
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  3
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+  00000018          00028 TXSTA_P                      EQU     H'0098'-0x80
+  00000019          00029 SPBRG_P                      EQU     H'0099'-0x80
+  0000001F          00030 ADCON1_P                     EQU     H'009F'-0x80
+                    00031 
+                    00032 
+                    00033 
+                    00034 ; Special register bit definition pairs
+                    00035 
+                    00036 ;     STATUS bit definitions
+                    00037 
+                    00038 #define _C              STATUS,0
+                    00039 #define _DC             STATUS,1
+                    00040 #define _Z              STATUS,2
+                    00041 #define _PD             STATUS,3
+                    00042 #define _TO             STATUS,4
+                    00043 #define _RP0            STATUS,5
+                    00044 #define _RP1            STATUS,6
+                    00045 #define _IRP            STATUS,7
+                    00046 
+                    00047 
+                    00048 #define _INTE       INTCON,INTE   ; External interrupt enable 
+                    00049 #define _INTF       INTCON,INTF   ; External interrupt flag
+                    00050 #define _RBIE       INTCON,RBIE   ; Port B pins 4-7 edge interrupt enable 
+                    00051 #define _RBIF       INTCON,RBIF   ; Port B pins 4-7 edge interrupt flag
+                    00052 #define _T0IE       INTCON,T0IE   ; Timer 0 interrupt enable 
+                    00053 #define _T0IF       INTCON,T0IF   ; Timer 0 interrupt flag
+                    00054 
+                    00055 #define _CCP1IE_P   PIE1_P,CCP1IE ; Timer 1 compare int enable (page 1)
+                    00056 #define _CCP1IF     PIR1,CCP1IF   ; Timer 1 compare int flag
+                    00057 
+                    00058 #define _RCIE_P     PIE1_P,RCIE   ; async rec interrupt enable (page 1)
+                    00059 #define _RCIF       PIR1,RCIF     ; async rec interrupt flag
+                    00060 
+                    00061 #define _TXIE_P     PIE1_P,TXIE   ; async xmit interrupt enable (page 1)
+                    00062 #define _TXIF       PIR1,TXIF     ; async xmit interrupt flag
+                    00063 
+                    00064 #define _SSPIE_P    PIE1_P,SSPIE  ; SSP int enable (page 1)
+                    00065 #define _SSPIF      PIR1,SSPIE    ; SSP interrupt flag
+                    00066 
+                    00067 #define _TMR1IE_P   PIE1_P,TMR1IE ; Timer 1 enable (page 1)
+                    00068 #define _TMR1IF     PIR1,TMR1IF   ; Timer1 interrupt flag
+                    00069 
+                    00070 #define _TMR2IE_P   PIE1_P,TMR2IE ; Timer 2 enable (page 1)
+                    00071 #define _TMR2IF     PIR1,TMR2IF   ; Timer2 interrupt flag
+                    00072 
+                    00073 #ifdef _COMMONBANK ; use common upper 16 bytes in 4 banks
+                    00074 
+                    00075 PAGE3   macro   
+                    00076         bsf     PCLATH,4
+                    00077         bsf     PCLATH,3
+                    00078         endm
+                    00079 
+                    00080 PAGE2   macro
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  4
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00081         bsf     PCLATH,4
+                    00082         bcf     PCLATH,3
+                    00083         endm
+                    00084 
+                    00085 PAGE1   macro   
+                    00086         bcf     PCLATH,4
+                    00087         bsf     PCLATH,3
+                    00088         endm
+                    00089 
+                    00090 PAGE0   macro
+                    00091         bcf     PCLATH,4
+                    00092         bcf     PCLATH,3
+                    00093         endm
+                    00094 
+                    00095 
+                    00096 BANK3   macro
+                    00097         bsf     STATUS,6
+                    00098         bsf     STATUS,5
+                    00099         endm
+                    00100 
+                    00101 BANK2   macro
+                    00102         bsf     STATUS,6
+                    00103         bcf     STATUS,5
+                    00104         endm
+                    00105 
+                    00106 BANK1   macro
+                    00107         bcf     STATUS,6
+                    00108         bsf     STATUS,5
+                    00109         endm
+                    00110 
+                    00111 BANK0   macro
+                    00112         bcf     STATUS,6
+                    00113         bcf     STATUS,5
+                    00114         endm
+                    00115 
+                    00116 
+                    00117 FSRBank23 macro
+                    00118         bsf     STATUS,7
+                    00119         endm
+                    00120 
+                    00121 FSRBank01 macro
+                    00122         bcf     STATUS,7
+                    00123         endm
+                    00124 #else
+                    00125 
+                    00126 
+                    00127 PAGE1   macro   
+                    00128         bsf     PCLATH,3
+                    00129         endm
+                    00130 
+                    00131 PAGE0   macro
+                    00132         bcf     PCLATH,3
+                    00133         endm
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  5
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00134 
+                    00135 BANK0   macro
+                    00136         bcf     STATUS,5    ; Select page 0
+                    00137         endm
+                    00138 
+                    00139 BANK1   macro
+                    00140         bsf     STATUS,5    ; Select page 1
+                    00141         endm
+                    00142 #endif
+                    00143 
+                    00144 enableInt macro
+                    00145         bsf     INTCON,GIE
+                    00146         endm
+                    00147 
+                    00148 disableInt macro
+                    00149           local    Loop
+                    00150 Loop    bcf     INTCON,GIE
+                    00151         btfsc   INTCON,GIE
+                    00152         goto    Loop
+                    00153         endm
+                    00154 
+                    00155 
+                    00156 
+                    00157 ; Byte logical & arithmetic macros
+                    00158 
+                    00159 bV2bV   macro   bSource,bDest
+                    00160         movf    bSource,W
+                    00161         movwf   bDest
+                    00162         endm
+                    00163 
+                    00164 bL2bV   macro   bVal,bDest
+                    00165         movlw   bVal
+                    00166         movwf   bDest
+                    00167         endm
+                    00168 
+                    00169 jmpFeqZ macro   Reg,Label
+                    00170         movf    Reg,F
+                    00171         btfsc   _Z
+                    00172         goto    Label
+                    00173         endm
+                    00174 
+                    00175 jmpFneZ macro   Reg,Label
+                    00176         movf    Reg,F
+                    00177         btfss   _Z
+                    00178         goto    Label
+                    00179         endm
+                    00180 
+                    00181 jmpFgtL macro   Reg1,bVal,Label
+                    00182           movfw     Reg1
+                    00183           jmpWgtL   bVal,Label
+                    00184         endm
+                    00185 
+                    00186 jmpFgeL macro   Reg1,bVal,Label
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  6
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00187           movfw     Reg1
+                    00188           jmpWgeL   bVal,Label
+                    00189         endm
+                    00190 
+                    00191 jmpFeqL macro   Reg,bVal,Label
+                    00192         movf    Reg,W
+                    00193           sublw   bVal
+                    00194         btfsc   _Z
+                    00195         goto    Label
+                    00196         endm
+                    00197 
+                    00198 jmpFneL macro   Reg,bVal,Label
+                    00199         movf    Reg,W
+                    00200           sublw   bVal
+                    00201           btfss   _Z
+                    00202           goto    Label
+                    00203           endm
+                    00204 
+                    00205 jmpFleL macro   Reg1,bVal,Label
+                    00206           movfw     Reg1
+                    00207           jmpWleL   bVal,Label
+                    00208         endm
+                    00209 
+                    00210 jmpFltL macro   Reg1,bVal,Label
+                    00211           movfw     Reg1
+                    00212           jmpWltL   bVal,Label
+                    00213         endm
+                    00214 
+                    00215 jmpFeqF macro   Reg1,Reg2,Label
+                    00216         movf    Reg1,W
+                    00217         subwf   Reg2,W
+                    00218         btfsc   _Z
+                    00219         goto    Label
+                    00220         endm
+                    00221 
+                    00222 jmpFneF macro   Reg1,Reg2,Label
+                    00223         movf    Reg1,W
+                    00224         subwf   Reg2,W
+                    00225         btfss   _Z
+                    00226         goto    Label
+                    00227         endm
+                    00228 
+                    00229 jmpFleF macro   Reg1,Reg2,Label
+                    00230           movfw     Reg1
+                    00231           jmpWleF   Reg2,Label
+                    00232         endm
+                    00233 
+                    00234 jmpFltF macro   Reg1,Reg2,Label
+                    00235           movfw     Reg1
+                    00236           jmpWltF   Reg2,Label
+                    00237         endm
+                    00238 
+                    00239 jmpWeqZ macro   Label        ; jmp if W == 0
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  7
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00240         andlw   0xFF
+                    00241         jmpZ    Label
+                    00242         endm
+                    00243 
+                    00244 jmpWneZ macro   Label        ; jmp if W != 0
+                    00245         andlw   0xFF
+                    00246         jmpNZ   Label
+                    00247         endm
+                    00248 
+                    00249 skipFeqZ macro   Reg
+                    00250         movf    Reg,F
+                    00251         btfss   _Z
+                    00252         endm
+                    00253 
+                    00254 skipFneZ macro   Reg
+                    00255         movf    Reg,F
+                    00256         btfsc   _Z
+                    00257         endm
+                    00258 
+                    00259 skipFeqL macro   Reg,bVal
+                    00260         movf    Reg,W
+                    00261         sublw   bVal
+                    00262         btfss   _Z
+                    00263         endm
+                    00264 
+                    00265 skipFneL macro   Reg,bVal
+                    00266         movf    Reg,W
+                    00267         sublw   bVal
+                    00268         btfsc   _Z
+                    00269         endm
+                    00270 
+                    00271 skipFeqF macro   Reg1,Reg2
+                    00272         movf    Reg1,W
+                    00273         subwf   Reg2,W
+                    00274         btfss   _Z
+                    00275         endm
+                    00276 
+                    00277 skipFneF macro   Reg1,Reg2
+                    00278         movf    Reg1,W
+                    00279         subwf   Reg2,W
+                    00280         btfsc   _Z
+                    00281         endm
+                    00282 
+                    00283 skipWeqZ macro
+                    00284         andlw   0xFF
+                    00285         btfss   _Z
+                    00286         endm
+                    00287 
+                    00288 skipWneZ macro
+                    00289         andlw   0xFF
+                    00290         btfsc   _Z
+                    00291         endm
+                    00292 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  8
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00293 jmpWgtL macro   bVal,Label
+                    00294         sublw   bVal
+                    00295         btfss   _C
+                    00296         goto    Label
+                    00297         endm
+                    00298 
+                    00299 jmpWgeL macro   bVal,Label
+                    00300         sublw   bVal
+                    00301         btfss   _C
+                    00302         goto    Label
+                    00303         btfsc   _Z
+                    00304         goto    Label
+                    00305         endm
+                    00306 
+                    00307 jmpWeqL macro   bVal,Label
+                    00308         sublw   bVal
+                    00309         btfsc   _Z
+                    00310         goto    Label
+                    00311         endm
+                    00312 
+                    00313 jmpWneL macro   bVal,Label
+                    00314         sublw   bVal
+                    00315         btfss   _Z
+                    00316         goto    Label
+                    00317         endm
+                    00318 
+                    00319 jmpWleL macro   bVal,Label
+                    00320         sublw   bVal
+                    00321         btfsc   _C
+                    00322         goto    Label
+                    00323         endm
+                    00324 
+                    00325 jmpWltL macro   bVal,Label
+                    00326         sublw   bVal
+                    00327         skipC
+                    00328         bsf     _Z
+                    00329         jmpNZ   Label
+                    00330         endm
+                    00331 
+                    00332 jmpWgtF macro   Reg,Label
+                    00333         subwf   Reg,W
+                    00334         btfss   _C
+                    00335         goto    Label
+                    00336         endm
+                    00337 
+                    00338 jmpWgeF macro   Reg,Label
+                    00339         subwf   Reg,W
+                    00340         btfss   _C
+                    00341         goto    Label
+                    00342         btfsc   _Z
+                    00343         goto    Label
+                    00344         endm
+                    00345 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE  9
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00346 jmpWeqF macro   Reg,Label
+                    00347         subwf   Reg,W
+                    00348         btfsc   _Z
+                    00349         goto    Label
+                    00350         endm
+                    00351 
+                    00352 jmpWneF macro   Reg,Label
+                    00353         subwf   Reg,W
+                    00354         btfss   _Z
+                    00355         goto    Label
+                    00356         endm
+                    00357 
+                    00358 jmpWleF macro   Reg,Label
+                    00359         subwf   Reg,W
+                    00360         btfsc   _C
+                    00361         goto    Label
+                    00362         endm
+                    00363 
+                    00364 jmpWltF macro   Reg,Label
+                    00365         subwf   Reg,W
+                    00366         skipC
+                    00367         bsf     _Z
+                    00368         jmpNZ   Label
+                    00369         endm
+                    00370 
+                    00371 
+                    00372 jmpClr  macro Reg,Bit,Label
+                    00373 
+                    00374         btfss   Reg,Bit
+                    00375         goto    Label
+                    00376         endm
+                    00377 
+                    00378 jmpSet  macro Reg,Bit,Label
+                    00379         btfsc   Reg,Bit
+                    00380         goto    Label
+                    00381         endm
+                    00382 
+                    00383 jmpZ    macro Label
+                    00384         btfsc   _Z
+                    00385         goto    Label
+                    00386         endm
+                    00387 
+                    00388 jmpNZ   macro Label
+                    00389         btfss   _Z
+                    00390         goto    Label
+                    00391         endm
+                    00392 
+                    00393 jmpC    macro Label
+                    00394         btfsc   _C
+                    00395         goto    Label
+                    00396         endm
+                    00397 
+                    00398 jmpNC   macro Label
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 10
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00399         btfss   _C
+                    00400         goto    Label
+                    00401         endm
+                    00402 
+                    00403 skipClr macro Reg,Bit
+                    00404         btfsc   Reg,Bit
+                    00405         endm
+                    00406 
+                    00407 skipSet macro Reg,Bit
+                    00408         btfss   Reg,Bit
+                    00409         endm
+                    00410 
+                    00411 skipNZ  macro
+                    00412         btfsc   _Z
+                    00413         endm
+                    00414 
+                    00415 skipZ   macro
+                    00416         btfss   _Z
+                    00417         endm
+                    00418 
+                    00419 skipNC  macro
+                    00420         btfsc   _C
+                    00421         endm
+                    00422 
+                    00423 skipC   macro
+                    00424         btfss   _C
+                    00425         endm
+                    00426 
+                    00427 toggle  macro Reg,Bit
+                    00428         local    SLabel,Label
+                    00429         btfss   Reg,Bit
+                    00430         goto    SLabel
+                    00431         bcf     Reg,Bit
+                    00432         goto    Label
+                    00433 SLabel  bsf     Reg,Bit
+                    00434 Label   
+                    00435         endm        
+                    00436 
+                    00437 
+                    00438 tb2tb macro RegS,BitS,RegD,BitD
+                    00439           local     jLab1,jLab2
+                    00440           jmpSet    RegS,BitS,jLab1
+                    00441           bcf       RegD,BitD
+                    00442           goto      jLab2
+                    00443 jLab1     bsf       RegD,BitD
+                    00444 jLab2
+                    00445           endm
+                    00446 
+                    00447 tb2Nottb macro RegS,BitS,RegD,BitD
+                    00448           local     jLab1,jLab2
+                    00449           jmpClr    RegS,BitS,jLab1
+                    00450           bcf       RegD,BitD
+                    00451           goto      jLab2
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 11
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00452 jLab1     bsf       RegD,BitD
+                    00453 jLab2
+                    00454           endm
+                    00076 #include "MCP2510.INC"
+                    00001 ;----------------------------------------------------------------------
+                    00002 ;MCP2510.INC
+                    00003 ; Description:  This file contains the definitions for the MicroChip
+                    00004 ; standalone CANbus controller.
+                    00005 ;
+                    00006 ; 07/17/99 JPF Original Version
+                    00007 ; 09/11/99 JCT Modified for ASM
+                    00008 ;----------------------------------------------------------------------
+                    00009 
+                    00010 #define RXF0SIDH        0x00
+                    00011 #define RXF0SIDL        0x01
+                    00012 #define RXF0EID8        0x02
+                    00013 #define RXF0EID0        0x03
+                    00014 #define RXF1SIDH        0x04
+                    00015 #define RXF1SIDL        0x05
+                    00016 #define RXF1EID8        0x06
+                    00017 #define RXF1EID0        0x07
+                    00018 #define RXF2SIDH        0x08
+                    00019 #define RXF2SIDL        0x09
+                    00020 #define RXF2EID8        0x0A
+                    00021 #define RXF2EID0        0x0B
+                    00022 #define BFPCTRL 0x0C
+                    00023 #define TXRTSCTRL       0x0D
+                    00024 #define CANSTAT 0x0E
+                    00025 #define CANCTRL 0x0F
+                    00026 
+                    00027 #define RXF3SIDH        0x10
+                    00028 #define RXF3SIDL        0x11
+                    00029 #define RXF3EID8        0x12
+                    00030 #define RXF3EID0        0x13
+                    00031 #define RXF4SIDH        0x14
+                    00032 #define RXF4SIDL        0x15
+                    00033 #define RXF4EID8        0x16
+                    00034 #define RXF4EID0        0x17
+                    00035 #define RXF5SIDH        0x18
+                    00036 #define RXF5SIDL        0x19
+                    00037 #define RXF5EID8        0x1A
+                    00038 #define RXF5EID0        0x1B
+                    00039 #define TEC     0x1C
+                    00040 #define REC         0x1D
+                    00041 #define CANSTAT1        0x1E
+                    00042 #define CANCTRL1        0x1F
+                    00043 
+                    00044 #define RXM0SIDH        0x20
+                    00045 #define RXM0SIDL        0x21
+                    00046 #define RXM0EID8        0x22
+                    00047 #define RXM0EID0        0x23
+                    00048 #define RXM1SIDH        0x24
+                    00049 #define RXM1SIDL        0x25
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 12
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00050 #define RXM1EID8        0x26
+                    00051 #define RXM1EID0        0x27
+                    00052 #define CNF3    0x28
+                    00053 #define CNF2    0x29
+                    00054 #define CNF1    0x2A
+                    00055 #define CANINTE 0x2B
+                    00056 #define CANINTF 0x2C
+                    00057 #define EFLG    0x2D
+                    00058 #define CANSTAT2        0x2E
+                    00059 #define CANCTRL2        0x2F
+                    00060 
+                    00061 #define TXB0CTRL        0x30
+                    00062 #define TXB0SIDH        0x31
+                    00063 #define TXB0SIDL        0x32
+                    00064 #define TXB0EID8        0x33
+                    00065 #define TXB0EID0        0x34
+                    00066 #define TXB0DLC 0x35
+                    00067 #define TXB0D0  0x36
+                    00068 #define TXB0D1  0x37
+                    00069 #define TXB0D2  0x38
+                    00070 #define TXB0D3  0x39
+                    00071 #define TXB0D4  0x3A
+                    00072 #define TXB0D5  0x3B
+                    00073 #define TXB0D6  0x3C
+                    00074 #define TXB0D7  0x3D
+                    00075 #define CANSTAT3        0x3E
+                    00076 #define CANCTRL3        0x3F
+                    00077 
+                    00078 #define TXB1CTRL        0x40
+                    00079 #define TXB1SIDH        0x41
+                    00080 #define TXB1SIDL        0x42
+                    00081 #define TXB1EID8        0x43
+                    00082 #define TXB1EID0        0x44
+                    00083 #define TXB1DLC 0x45
+                    00084 #define TXB1D0  0x46
+                    00085 #define TXB1D1  0x47
+                    00086 #define TXB1D2  0x48
+                    00087 #define TXB1D3  0x49
+                    00088 #define TXB1D4  0x4A
+                    00089 #define TXB1D5  0x4B
+                    00090 #define TXB1D6  0x4C
+                    00091 #define TXB1D7  0x4D
+                    00092 #define CANSTAT4        0x4E
+                    00093 #define CANCTRL4        0x4F
+                    00094 
+                    00095 #define TXB2CTRL        0x50
+                    00096 #define TXB2SIDH        0x51
+                    00097 #define TXB2SIDL        0x52
+                    00098 #define TXB2EID8        0x53
+                    00099 #define TXB2EID0        0x54
+                    00100 #define TXB2DLC 0x55
+                    00101 #define TXB2D0  0x56
+                    00102 #define TXB2D1  0x57
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 13
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00103 #define TXB2D2  0x58
+                    00104 #define TXB2D3  0x59
+                    00105 #define TXB2D4  0x5A
+                    00106 #define TXB2D5  0x5B
+                    00107 #define TXB2D6  0x5C
+                    00108 #define TXB2D7  0x5D
+                    00109 #define CANSTAT5        0x5E
+                    00110 #define CANCTRL5        0x5F
+                    00111 
+                    00112 #define RXB0CTRL        0x60
+                    00113 #define RXB0SIDH        0x61
+                    00114 #define RXB0SIDL        0x62
+                    00115 #define RXB0EID8        0x63
+                    00116 #define RXB0EID0        0x64
+                    00117 #define RXB0DLC 0x65
+                    00118 #define RXB0D0  0x66
+                    00119 #define RXB0D1  0x67
+                    00120 #define RXB0D2  0x68
+                    00121 #define RXB0D3  0x69
+                    00122 #define RXB0D4  0x6A
+                    00123 #define RXB0D5  0x6B
+                    00124 #define RXB0D6  0x6C
+                    00125 #define RXB0D7  0x6D
+                    00126 #define CANSTAT6        0x6E
+                    00127 #define CANCTRL6        0x6F
+                    00128 
+                    00129 #define RXB1CTRL        0x70
+                    00130 #define RXB1SIDH        0x71
+                    00131 #define RXB1SIDL        0x72
+                    00132 #define RXB1EID8        0x73
+                    00133 #define RXB1EID0        0x74
+                    00134 #define RXB1DLC 0x75
+                    00135 #define RXB1D0  0x76
+                    00136 #define RXB1D1  0x77
+                    00137 #define RXB1D2  0x78
+                    00138 #define RXB1D3  0x79
+                    00139 #define RXB1D4  0x7A
+                    00140 #define RXB1D5  0x7B
+                    00141 #define RXB1D6  0x7C
+                    00142 #define RXB1D7  0x7D
+                    00143 #define CANSTAT7        0x7E
+                    00144 #define CANCTRL7        0x7F
+                    00145 
+                    00146 ;; Bit definitions
+                    00147 
+                    00148 ;; Bit definitions BFPCTRL
+                    00149 #define trB1BFS BFPCTRL,5
+                    00150 #define trB0BFS BFPCTRL,4
+                    00151 #define trB1BFE BFPCTRL,3
+                    00152 #define trB0BFE BFPCTRL,2
+                    00153 #define trB1BFM BFPCTRL,1
+                    00154 #define trB0BFM BFPCTRL,0
+                    00155 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 14
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00156 ;; Bit definitions TXRTSCTRL
+                    00157 #define trB2RTS BFPCTRL,5
+                    00158 #define trB1RTS BFPCTRL,4
+                    00159 #define trB0RTS BFPCTRL,3
+                    00160 #define trB2RTSM        BFPCTRL,2
+                    00161 #define trB1RTSM        BFPCTRL,1
+                    00162 #define trB0RTSM        BFPCTRL,0
+                    00163 
+                    00164 ;; Bit definitions CANSTAT
+                    00165 #define trOPMOD2        CANSTAT,7
+                    00166 #define trOPMOD1        CANSTAT,6
+                    00167 #define trOPMOD0        CANSTAT,5
+                    00168 #define trICOD2 CANSTAT,3
+                    00169 #define trICOD1 CANSTAT,2
+                    00170 #define trICOD0 CANSTAT,1
+                    00171 
+                    00172 ;; Bit definitions CANCTRL
+                    00173 #define trREQOP2        CANCTRL,7
+                    00174 #define trREQOP1        CANCTRL,6
+                    00175 #define trREQOP0        CANCTRL,5
+                    00176 #define trABAT  CANCTRL,4
+                    00177 #define trCLKEN CANCTRL,2
+                    00178 #define trCLKPRE1       CANCTRL,1
+                    00179 #define trCLKPRE0       CANCTRL,0
+                    00180 
+                    00181 ;; Dit definitions CNF3
+                    00182 #define trWAKFIL        CNF3,6
+                    00183 #define trPHSEG22       CNF3,2
+                    00184 #define trPHSEG21       CNF3,1
+                    00185 #define trPHSEG20       CNF3,0
+                    00186 
+                    00187 ;; Bit definitions CNF2
+                    00188 #define trBTLMODE       CNF2,7
+                    00189 #define trSAM   CNF2,6
+                    00190 #define trPHSEG12       CNF2,5
+                    00191 #define trPHSEG11       CNF2,4
+                    00192 #define trPHSEG10       CNF2,3
+                    00193 #define trPHSEG2        CNF2,2
+                    00194 #define trPHSEG1        CNF2,1
+                    00195 #define trPHSEG0        CNF2,0
+                    00196 
+                    00197 ;; Bit definitions CNF1
+                    00198 #define trSJW1  CNF1,7
+                    00199 #define trSJW0  CNF1,6
+                    00200 #define trBRP5  CNF1,5
+                    00201 #define trBRP4  CNF1,4
+                    00202 #define trBRP3  CNF1,3
+                    00203 #define trBRP2  CNF1,2
+                    00204 #define trBRP1  CNF1,1
+                    00205 #define trBRP0  CNF1,0
+                    00206 
+                    00207 ;; Bit definitions CANINTE
+                    00208 #define trMERRE CANINTE,7
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 15
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00209 #define trWAKIE CANINTE,6
+                    00210 #define trERRIE CANINTE,5
+                    00211 #define trTX2IE CANINTE,4
+                    00212 #define trTX1IE CANINTE,3
+                    00213 #define trTX0IE CANINTE,2
+                    00214 #define trRX1IE CANINTE,1
+                    00215 #define trRX0IE CANINTE,0
+                    00216 
+                    00217 ;; Bit definitions CANINTF
+                    00218 #define trMERRF CANINTF,7
+                    00219 #define trWAKIF CANINTF,6
+                    00220 #define trERRIF CANINTF,5
+                    00221 #define trTX2IF CANINTF,4
+                    00222 #define trTX1IF CANINTF,3
+                    00223 #define trTX0IF CANINTF,2
+                    00224 #define trRX1IF CANINTF,1
+                    00225 #define trRX0IF CANINTF,0
+                    00226 
+                    00227 ;; Bit definitions EFLG
+                    00228 #define trRX1OVR        EFLG,7
+                    00229 #define trRX0OVR        EFLG,6
+                    00230 #define trTXB0  EFLG,5
+                    00231 #define trTXEP  EFLG,4
+                    00232 #define trRXEP  EFLG,3
+                    00233 #define trTXWAR EFLG,2
+                    00234 #define trRXWAR EFLG,1
+                    00235 #define trEWARN EFLG,0
+                    00236 
+                    00237 ;; Bit definitions TXB0CTRL
+                    00238 #define trABTF0 TXB0CTRL,6
+                    00239 #define trMLOA0 TXB0CTRL,5
+                    00240 #define trTXERR0        TXB0CTRL,4
+                    00241 #define trTXREQ0        TXB0CTRL,3
+                    00242 #define trTXP10 TXB0CTRL,1
+                    00243 #define trTXP00 TXB0CTRL,0
+                    00244 
+                    00245 ;; Bit definitions TXB1CTRL
+                    00246 #define trABTF1 TXB1CTRL,6
+                    00247 #define trMLOA1 TXB1CTRL,5
+                    00248 #define trTXERR1        TXB1CTRL,4
+                    00249 #define trTXREQ1        TXB1CTRL,3
+                    00250 #define trTXP11 TXB1CTRL,1
+                    00251 #define trTXP01 TXB1CTRL,0
+                    00252 
+                    00253 ;; Bit definitions TXB2CTRL
+                    00254 #define trABTF2 TXB2CTRL,6
+                    00255 #define trMLOA2 TXB2CTRL,5
+                    00256 #define trTXERR2        TXB2CTRL,4
+                    00257 #define trTXREQ2        TXB2CTRL,3
+                    00258 #define trTXP12 TXB2CTRL,1
+                    00259 #define trTXP02 TXB2CTRL,0
+                    00260 
+                    00261 ;; Bit definitions RXB0CTRL
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 16
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00262 #define trRXM10 RXB0CTRL,6
+                    00263 #define trRXM00 RXB0CTRL,5
+                    00264 #define trRXRTR0        RXB0CTRL,3
+                    00265 #define trBUKT01        RXB0CTRL,2
+                    00266 #define trBUKT00        RXB0CTRL,1
+                    00267 #define trFILHIT00      RXB0CTRL,0
+                    00268 
+                    00269 ;; Bit definitions RXB1CTRL
+                    00270 #define trRXM11 RXB1CTRL,6
+                    00271 #define trRXM01 RXB1CTRL,5
+                    00272 #define trRXRTR1        RXB1CTRL,3
+                    00273 #define trFILHIT12      RXB1CTRL,2
+                    00274 #define trFILHIT11      RXB1CTRL,1
+                    00275 #define trFILHIT10      RXB1CTRL,0
+                    00276 
+                    00277 
+                    00278 ;; use with SPI_Rts function
+                    00279 #define RTS0        0x01 
+                    00280 #define RTS1        0x02
+                    00281 #define RTS2        0x04
+                    00077 
+                    00078 ;          errorlevel 0,-306,-302,-305
+                    00079 
+                    00080  
+                    00081 ;******** constants
+                    00082 
+                    00083 ;Crystal freq 4.00 MHz, Fosc/4 = 1 uS
+                    00084 ;
+                    00085 ; Timer 1: Uses no prescale => Tic is 1 uSec
+                    00086 ;       8 bit rollover 256 uSec
+                    00087 ;       16 bit rollover 65.536 mSec
+                    00088 
+                    00089 ;   8 bit timers
+                    00090 ;    TMR1L: 1 uSec tics with maximum of 1/2 rollover = 128 uSec maximum
+                    00091 ;    TMR1H: 256 uSec tics with maximum of 1/2 rollover = 32.768 msec maximum
+                    00092 
+                    00093 
+                    00094 
+                    00095 ;======================================================================
+                    00096 
+                    00097 ;************************
+                    00098 ; A/D selection ( value of ADCON0 )
+                    00099 
+                    00100 #define dA2DRA0     B'01000000'         ; fosc/8 clk, RA0, A/D off
+                    00101 #define dA2DRA3     B'01011000'         ; fosc/8 clk, RA3, A/D off
+                    00102 
+                    00103 
+                    00104 ;************************
+                    00105 ; special function defines
+                    00106 
+                    00107 #define _SSPEN      SSPCON,SSPEN        ; SPI enable
+                    00108 
+                    00109 ;************************
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 17
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00110 
+                    00111 ;; General control flags definitions
+                    00112 
+                    00113 #define tbWork          bGenFlags1,0   ; working bit
+                    00114 #define tbReset         bGenFlags1,1   ; must reset 
+                    00115 #define tbNewSPI        bGenFlags1,2   ; new SPI data available
+                    00116 #define tbRxMsgPend     bGenFlags1,3   ; new CAN message received
+                    00117 #define tbTxMsg         bGenFlags1,4   ; xmit next CAN message
+                    00118 #define tbRC2NowHigh    bGenFlags1,5   ; Robot PWM signal high
+                    00119 
+                    00120 
+                    00121 ;*****************  PIN DEFINITIONS **************************
+                    00122 
+                    00123 #define tp2510_CS_   PORTA,1       ; CS_ for 2510 chip
+                    00124 
+                    00125 ;; I/O 
+                    00126 #define tpSwitch_    PORTB,1       ; Push button switch, Open => high
+                    00127 #define tpLED        PORTB,2       ; LED 
+                    00128 
+                    00129 ;; Analog In 
+                    00130 #define tpA2D_CS_    PORTB,1       ; CS_ for 3201 A2D chip
+                    00131 #define tpEE_CS_     PORTB,2       ; CS_ for 25040 E2
+                    00132 
+                    00133 ;*****************  LOCAL REGISTER STORAGE **************************
+                    00134 ;
+                    00135 ;
+                    00136 ;============ BANK 0 =================
+                    00137 
+                    00138  cblock   0x20
+                    00139      ;; interrupt variables
+  00000020          00140           bIntSaveSt       ; save Status
+  00000021          00141           bIntSaveFSR      ; save FSR
+  00000022          00142           bIntSavPCLATH    ; interrupt storage for PCLATH
+  00000023          00143           bIntWork         ; working
+  00000024          00144           iIntWork:2       ; working
+                    00145 
+                    00146      ;; general work space
+  00000026          00147         bGenFlags1       ; general control flags 1
+  00000027          00148         bGenFlags2       ; general control flags 2
+  00000028          00149           bWork            ; work byte
+  00000029          00150           bWork1           ; work byte 
+  0000002A          00151         iWork:2          ; work integer
+  0000002C          00152         bCnt             ; work byte counter
+                    00153 
+                    00154      ;; Arithmetic
+  0000002D          00155           iA:2             ; 2 byte integer
+  0000002F          00156           iB:2             ; 2 byte integer
+                    00157 
+                    00158      ;; Timer1
+  00000031          00159           iTimer1:2        ; counts Timer1 rollover   
+  00000033          00160           bGenClk          ; general clock    
+  00000034          00161           bXmitClk         ; Countdown to xmit next message
+                    00162 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 18
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00163      ;; In/Out variables
+  00000035          00164           iA2DValue:2      ; 12 bit or 8 bit A2D value   
+  00000037          00165           bPWMValue        ; 8 bit PWM value   
+  00000038          00166           iRecValue:2      ; 12 bit received value
+                    00167 
+                    00168      ;; general control
+  0000003A          00169           bSwXmitID        ; ID for transmission from DIP switch
+  0000003B          00170           bBaseRecID       ; ID for reception from DIP switch
+  0000003C          00171           bRecIDNext       ; Rec Base ID + 1
+  0000003D          00172           bXmitID          ; ID for transmission of next msg
+  0000003E          00173           bNextMsgType     ; Select next msg
+                    00174 
+                    00175      ;; Received CAN message
+  0000003F          00176           iRecID_L         ; ID of received message (3 bits left justified)
+  00000040          00177           iRecID_H         ; ID of received message (8 bits left justified)
+  00000041          00178           bRecCount        ; number of bytes received
+  00000042          00179           pRecDataBase:8   ; received data
+                    00180 
+                    00181      ;; Low level SPI interface
+  0000004A          00182           b2510RegAdr      ; Register address
+  0000004B          00183           b2510RegData     ; Data sent/received
+  0000004C          00184           b2510RegMask     ; Bit Mask
+                    00185 
+                    00186        ; following used in interrupt      
+  0000004D          00187           bSPICnt          ; # bytes remaining to receive
+  0000004E          00188           pSPIBuf          ; Pointer into buffer   
+  0000004F          00189           pSPIBufBase:12   ; Base of SPI receive/xmit buffer
+                    00190 
+                    00191  endc
+                    00192 
+                    00193 
+                    00194 ; storage for interrupt service routine
+                    00195 ; W saved in one of these locations depending on the page selected 
+                    00196 ; at the time the interrupt occured
+                    00197 
+  0000007F          00198 bIntSaveW0 equ  0x7F       ; interrupt storage for W
+                    00199 
+                    00200 ;============ BANK 1 =================
+  000000FF          00201 bIntSaveW1 equ  0xFF       ; interrupt storage for W
+                    00202 
+                    00203 ;*******************************************************************
+                    00204 ;********** LOCAL MACROS *******************************************
+                    00205 ;*******************************************************************
+                    00206 ; 
+                    00207 ; Shift left 2 byte integer once.
+                    00208 iShiftL macro    iVar
+                    00209         bcf      _C                ; clear carry bit    
+                    00210         rlf      iVar,F
+                    00211         rlf      iVar+1,F
+                    00212         endm
+                    00213 
+                    00214 ; Shift right 2 byte integer once.
+                    00215 iShiftR macro    iVar
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 19
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00216         bcf      _C               ; clear carry bit    
+                    00217         rrf      iVar+1,F
+                    00218         rrf      iVar,F
+                    00219         endm
+                    00220 
+                    00221 ; Increment 2 byte integer
+                    00222 intInc  macro   iVar
+                    00223         incf    iVar,F
+                    00224         skipNZ
+                    00225         incf    iVar+1,F
+                    00226         endm
+                    00227 
+                    00228 ; 
+                    00229 ;; --------------------------------------------------------
+                    00230 ;; Set TRM1H 8 bit clock
+                    00231 ;    TMR1H: 256 uSec tics with maximum of 1/2 rollover = 32.768 msec maximum
+                    00232 ;; --------------------------------------------------------
+                    00233 Set1HClock macro bClk,Value
+                    00234           movfw     TMR1H
+                    00235           addlw     Value
+                    00236           movwf     bClk
+                    00237           endm
+                    00238 
+                    00239 ;; --------------------------------------------------------
+                    00240 ;; Jump to jLabel if TMR1H (low byte) < bClk
+                    00241 ;; --------------------------------------------------------
+                    00242 jmp1HNotYet macro bClk,jLabel
+                    00243 
+                    00244           movfw     TMR1H
+                    00245           subwf     bClk,W
+                    00246           andlw     0x80
+                    00247           jmpZ      jLabel
+                    00248           endm
+                    00249 
+                    00250 ;; --------------------------------------------------------
+                    00251 ;; Jump to jLabel if TMR1H (low byte) < bClk
+                    00252 ;; --------------------------------------------------------
+                    00253 jmp1HDone macro bClk,jLabel
+                    00254 
+                    00255           movfw     TMR1H
+                    00256           subwf     bClk,W
+                    00257           andlw     0x80
+                    00258           jmpNZ     jLabel
+                    00259           endm
+                    00260 
+                    00261 
+                    00262 ;********************************************************************
+                    00263 ;      Begin Program Code
+                    00264 ;********************************************************************
+                    00265 
+0000                00266           ORG      0x0            ;memory @ 0x0
+0000 0000           00267           nop                     ;nop ICD!!
+0001 2907           00268         goto     HardStart
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 20
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00269 
+0004                00270         ORG     04h             ;Interrupt Vector @ 0x4
+                    00271 ;**********************************************************
+                    00272 ; Interrupt service routine - must be at location 4 if page 1 is used
+                    00273 ; Context save & restore takes ~20 instr
+                    00274 ;**********************************************************
+                    00275      ;; Global int bit, GIE, has been reset.
+                    00276      ;; W saved in bIntSaveW0 or bIntSaveW1 depending on the bank selected at
+                    00277      ;; the time the interrupt occured.
+0004 00FF           00278           movwf     bIntSaveW0      ; save W in either of two locations 
+                    00279                                     ; depending on bank currently selected
+                    00280 
+                    00281      ;; only way to preserve Status bits (since movf sets Z) is with a 
+                    00282      ;; swapf command now
+0005 0E03           00283           swapf     STATUS,W        ; Status to W with nibbles swapped
+                    00284           BANK0
+0006 1283               M         bcf     STATUS,5    ; Select page 0
+0007 00A0           00285           movwf     bIntSaveSt
+0008 0804           00286           movfw     FSR
+0009 00A1           00287           movwf     bIntSaveFSR     ; save FSR
+000A 080A           00288           movf      PCLATH,W 
+000B 00A2           00289           movwf     bIntSavPCLATH   ; interrupt storage for PCLATH
+000C 018A           00290           clrf      PCLATH          ; set to page 0
+                    00291 
+                    00292      ;; Must determine source of interrupt
+                    00293 
+                    00294      ;; SPI interrupt
+000D 198C           00295         btfsc    _SSPIF        ; SPI interrupt
+000E 28F9           00296         goto     IntSPI
+                    00297 
+                    00298           jmpSet   _TMR1IF,jIntTimer1  ; Timer1 overflow interrupt flag
+000F 180C               M         btfsc   PIR1,TMR1IF
+0010 28EE               M         goto    jIntTimer1
+                    00299 
+                    00300      ;; unknown
+                    00301                    
+                    00302      ;; restore registers and return
+0011                00303 IntReturn          
+                    00304           BANK0
+0011 1283               M         bcf     STATUS,5    ; Select page 0
+0012 0822           00305           movf      bIntSavPCLATH,W   ; interrupt storage for PCLATH
+0013 008A           00306           movwf     PCLATH
+0014 0821           00307           movf      bIntSaveFSR,W  ; restore FSR
+0015 0084           00308           movwf     FSR
+0016 0E20           00309           swapf     bIntSaveSt,W ; get swapped Status (now unswapped)
+0017 0083           00310           movwf     STATUS       ; W to Status  ( bank select restored )
+0018 0EFF           00311           swapf     bIntSaveW0,F ; swap original W in place
+0019 0E7F           00312           swapf     bIntSaveW0,W ; now load and unswap ( no status change)
+001A 0009           00313           retfie                 ; return from interrupt
+                    00314 
+                    00315 
+                    00316 ;***************** ID TABLE ****************************
+                    00317 ; Look up ID associated with bits 0,1 in W
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 21
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+001B 0782           00318 RxIDTable addwf    PCL,F           ;Jump to char pointed to in W reg
+                    00319                                       ;( adds 5bits from PCLATH )
+001C 3400           00320           retlw    0x00  ; 0
+001D 3420           00321           retlw    0x20  ; 1
+001E 3410           00322           retlw    0x10  ; 2
+001F 3430           00323           retlw    0x30  ; 3
+0020                00324 RxIDTable_End
+                    00325 #if ( (RxIDTable & 0xF00) != (RxIDTable_End & 0xF00) )
+                    00326        MESSG   "Warning - Table crosses page boundry in computed jump"
+                    00327 #endif
+                    00328 
+                    00329 ; Look up ID associated with bits 0,1 in W
+0020 0782           00330 TxIDTable addwf    PCL,F           ;Jump to char pointed to in W reg
+                    00331                                       ;( adds 5bits from PCLATH )
+0021 34FF           00332           retlw    0xFF  ; 0
+0022 3420           00333           retlw    0x20  ; 1
+0023 3410           00334           retlw    0x10  ; 2
+0024 3430           00335           retlw    0x30  ; 3
+0025                00336 TxIDTable_End
+                    00337 #if ( (TxIDTable & 0xF00) != (TxIDTable_End & 0xF00) )
+                    00338        MESSG   "Warning - Table crosses page boundry in computed jump"
+                    00339 #endif
+                    00340 
+                    00341 ;***************** LIBRARY STORAGE & FUNCTIONS ****************************
+                    00342 
+                    00343 #include "CanLib.asm"         ; basic 2510 interface routines
+                    00001 ;**********************************************************
+                    00002 ;**********************************************************
+                    00003 
+                    00004 
+                    00005 ; MCP2510 Instructions
+                    00006 #define d2510Rd      0x03      ; MCP2510 read instruction
+                    00007 #define d2510Wrt     0x02      ; MCP2510 write instruction
+                    00008 #define d2510Reset   0xC0      ; MCP2510 reset instruction
+                    00009 #define d2510RTS     0x80      ; MCP2510 RTS instruction
+                    00010 #define d2510Status  0xA0      ; MCP2510 Status instruction
+                    00011 #define d2510BitMod  0x05      ; MCP2510 bit modify instruction
+                    00012 
+                    00013 
+                    00014 
+                    00015 ;**********************************************************
+                    00016 ;*************** SPECIAL CAN MACROS ***********************
+                    00017 ;**********************************************************
+                    00018 
+                    00019 ; Read 2510 register Reg and return data in W.
+                    00020 SPI_Read macro Reg
+                    00021           movlw     Reg
+                    00022           call      Rd2510Reg
+                    00023           endm
+                    00024 
+                    00025 ; Write literal byte to 2510 register Reg.
+                    00026 SPI_WriteL macro Reg,LitData
+                    00027           movlw     LitData
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 22
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00028           movwf     b2510RegData
+                    00029           movlw     Reg
+                    00030           call      Wrt2510Reg
+                    00031           endm
+                    00032 
+                    00033 ; Write Data byte to 2510 register Reg.
+                    00034 SPI_WriteV macro Reg,RegData
+                    00035           movfw     RegData
+                    00036           movwf     b2510RegData
+                    00037           movlw     Reg
+                    00038           call      Wrt2510Reg
+                    00039           endm
+                    00040 
+                    00041 ; Write W byte to 2510 register Reg.
+                    00042 SPI_WriteW macro Reg
+                    00043           movwf     b2510RegData
+                    00044           movlw     Reg
+                    00045           call      Wrt2510Reg
+                    00046           endm
+                    00047 
+                    00048 
+                    00049 ; Write bits determined by Mask & Data to 2510 register Reg.
+                    00050 SPI_BitMod macro Reg,Mask,Data
+                    00051           movlw     Mask
+                    00052           movwf     b2510RegMask
+                    00053           movlw     Data
+                    00054           movwf     b2510RegData
+                    00055           movlw     Reg
+                    00056           call      BitMod2510
+                    00057           endm
+                    00058 
+                    00059 ; Arm xmit buffers for xmission
+                    00060 SPI_Rts macro Data
+                    00061           movlw     Data
+                    00062           call      Rts2510
+                    00063           endm
+                    00064 
+                    00065 
+                    00066 ;**********************************************************
+                    00067 ;**********************************************************
+                    00068 ;Support routines for communicating with 2510 chip
+                    00069 ;**********************************************************
+                    00070 ;**********************************************************
+                    00071 
+                    00072 ;******************************************************
+                    00073 ;CheckCANMsg
+                    00074 ;
+                    00075 ; Checks for message in Receive Buf 1.  If no message pending return
+                    00076 ; with Z flag set.
+                    00077 ;         
+                    00078 ; If message pending:
+                    00079 ;     Load iRecID_L,iRecID_H with ID.
+                    00080 ;     Load bRecCount with number of bytes of data received.
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 23
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00081 ;     Load buffer at pRecDataBase with data
+                    00082 ;     Clear 2510 Receive Buffer 1 interrupt flag
+                    00083 ;     Set tbRxMsgPend flag and clear Z flag.
+                    00084 ;
+                    00085 ; NOTE: If message already pending doesn't check for new message.
+                    00086 ;
+                    00087 ;******************************************************/
+0025                00088 CheckCANMsg
+                    00089 
+0025 1103           00090           bcf       _Z                  ; for return
+                    00091           skipClr   tbRxMsgPend         ; new CAN message received
+0026 19A6               M         btfsc   bGenFlags1,3
+0027 0008           00092           return                        ; Message already pending
+                    00093 
+                    00094      ;; Test for Message pending in Receive Buffer 1
+                    00095           SPI_Read  CANINTF
+0028 302C               M           movlw     0x2C
+0029 2079               M           call      Rd2510Reg
+002A 3902           00096           andlw     0x02      
+                    00097 
+                    00098           skipNZ
+002B 1903               M         btfsc   _Z
+002C 0008           00099           return              ; Nothing in Rec Buf 1
+                    00100 
+002D 15A6           00101           bsf       tbRxMsgPend         ; new CAN message received
+                    00102 
+                    00103      ;; Get ID of message source 
+                    00104           SPI_Read  RXB1SIDH
+002E 3071               M           movlw     0x71
+002F 2079               M           call      Rd2510Reg
+0030 00C0           00105           movwf     iRecID_H
+                    00106           SPI_Read  RXB1SIDL
+0031 3072               M           movlw     0x72
+0032 2079               M           call      Rd2510Reg
+0033 39E0           00107           andlw     0xE0
+0034 00BF           00108           movwf     iRecID_L
+                    00109 
+                    00110      ;; Get number of bytes of data
+                    00111           SPI_Read  RXB1DLC
+0035 3075               M           movlw     0x75
+0036 2079               M           call      Rd2510Reg
+0037 390F           00112           andlw     0x0F
+0038 00C1           00113           movwf     bRecCount
+                    00114 
+                    00115      ;; Get data from buffer. Up to 8 bytes based on 
+0039 01AC           00116           clrf      bCnt
+                    00117 
+                    00118 jRxChk11  jmpFeqF   bCnt,bRecCount,jRxChk90            ; no data left
+003A 082C               M         movf    bCnt,W
+003B 0241               M         subwf   bRecCount,W
+003C 1903               M         btfsc   _Z
+003D 2849               M         goto    jRxChk90
+                    00119 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 24
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00120      ;; Calculate correct 2510 receive buffer location
+003E 3076           00121           movlw     RXB1D0
+003F 072C           00122           addwf     bCnt,W
+                    00123 
+                    00124      ;; Get data byte
+0040 2079           00125           call      Rd2510Reg
+0041 00CB           00126           movwf     b2510RegData     ; temporary save
+                    00127 
+                    00128      ;; Calculate destination buffer location
+0042 3042           00129           movlw     pRecDataBase
+0043 072C           00130           addwf     bCnt,W
+0044 0084           00131           movwf     FSR
+                    00132 
+                    00133      ;; Store data in buffer
+0045 084B           00134           movfw     b2510RegData     ; temporary save
+0046 0080           00135           movwf     INDF
+0047 0AAC           00136           incf      bCnt,F
+0048 283A           00137           goto      jRxChk11
+                    00138 
+0049                00139 jRxChk90
+                    00140           SPI_BitMod CANINTF,0x02,0     ; Clear receive buffer 1 interrupt
+0049 3002               M           movlw     0x02
+004A 00CC               M           movwf     b2510RegMask
+004B 3000               M           movlw     0
+004C 00CB               M           movwf     b2510RegData
+004D 302C               M           movlw     0x2C
+004E 2090               M           call      BitMod2510
+004F 1103           00141           bcf       _Z                  ; signal data pending
+0050 0008           00142           return
+                    00143 
+                    00144 
+                    00145 ;**********************************************************
+                    00146 ;SetConfigMode
+                    00147 ;
+                    00148 ;// Function Name: Set_Config_Mode()
+                    00149 ;**********************************************************
+0051                00150 SetConfigMode
+                    00151 ;  SPI_BitMod(CANCTRL, 0xE0, 0x80);    //Config. mode/
+                    00152           bL2bV     0xE0,b2510RegMask
+0051 30E0               M         movlw   0xE0
+0052 00CC               M         movwf   b2510RegMask
+                    00153           bL2bV     0x80,b2510RegData
+0053 3080               M         movlw   0x80
+0054 00CB               M         movwf   b2510RegData
+0055 300F           00154           movlw     CANCTRL
+0056 2090           00155           call      BitMod2510
+                    00156 
+0057                00157 jSetConfigM1
+0057 300E           00158           movlw     CANSTAT
+0058 2079           00159           call      Rd2510Reg
+0059 39E0           00160           andlw     0xE0
+005A 3A80           00161           xorlw     0x80
+                    00162           jmpNZ     jSetConfigM1
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 25
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+005B 1D03               M         btfss   _Z
+005C 2857               M         goto    jSetConfigM1
+                    00163 
+005D 0008           00164           return
+                    00165 
+                    00166 
+                    00167 ;**********************************************************
+                    00168 ;SetNormalMode
+                    00169 ;
+                    00170 ;// Function Name: Set_Normal_Mode()
+                    00171 ;**********************************************************
+005E                00172 SetNormalMode
+                    00173 
+                    00174           bL2bV     0xE0,b2510RegMask
+005E 30E0               M         movlw   0xE0
+005F 00CC               M         movwf   b2510RegMask
+                    00175           bL2bV     0x00,b2510RegData
+0060 3000               M         movlw   0x00
+0061 00CB               M         movwf   b2510RegData
+0062 300F           00176           movlw     CANCTRL
+0063 2090           00177           call      BitMod2510
+                    00178 
+0064                00179 jSetNormalM1
+0064 300E           00180           movlw     CANSTAT
+0065 2079           00181           call      Rd2510Reg
+0066 39E0           00182           andlw     0xE0
+                    00183           jmpNZ     jSetNormalM1
+0067 1D03               M         btfss   _Z
+0068 2864               M         goto    jSetNormalM1
+                    00184 
+0069 0008           00185           return
+                    00186 
+                    00187 ;**********************************************************
+                    00188 ;WaitANDeqZ
+                    00189 ;         Wait for byte from address in W to AND with mask in
+                    00190 ;         b2510RegMask to be zero. Uses b2510RegAdr to hold address.
+                    00191 ;         
+                    00192 ;**********************************************************
+006A                00193 WaitANDeqZ
+006A 00CA           00194           movwf     b2510RegAdr         ; save
+                    00195 
+006B                00196 jWaitANDeqZ
+006B 084A           00197           movfw     b2510RegAdr         ; save
+006C 2079           00198           call      Rd2510Reg
+006D 054C           00199           andwf     b2510RegMask,W
+                    00200           jmpNZ     jWaitANDeqZ
+006E 1D03               M         btfss   _Z
+006F 286B               M         goto    jWaitANDeqZ
+0070 0008           00201           return
+                    00202 
+                    00203 
+                    00204 ;**********************************************************
+                    00205 ;**********************************************************
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 26
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00206 
+                    00207 
+                    00208 ;**********************************************************
+                    00209 ;**************** BASIC COMMUNICATION *********************
+                    00210 ;**********************************************************
+                    00211 
+                    00212 
+                    00213 ;**********************************************************
+                    00214 ;Get2510Status
+                    00215 ;         Get Status byte from 2510.
+                    00216 ;// Function Name: SPI_ReadStatus()
+                    00217 ;**********************************************************
+0071                00218 Get2510Status
+0071 20B5           00219           call      InitSPIBuf
+0072 30A0           00220           movlw     d2510Status          ; MCP2510 Status instruction
+0073 20BA           00221           call      LoadSPIByte
+0074 3001           00222           movlw     1                   ; expect 1 byte answer
+0075 20BD           00223           call      LoadSPIZeros
+0076 20C6           00224           call      ExchangeSPI
+0077 20D2           00225           call      WaitSPIExchange
+0078 0008           00226           return
+                    00227 
+                    00228 ;**********************************************************
+                    00229 ;Rd2510Reg
+                    00230 ;         Read 2510 register at address in W. Return results
+                    00231 ;         in W. Uses b2510RegAdr to hold address.
+                    00232 ;// Function Name: SPI_Read(uint address)
+                    00233 ;**********************************************************
+0079                00234 Rd2510Reg
+0079 00CA           00235           movwf     b2510RegAdr         ; save
+007A 20B5           00236           call      InitSPIBuf
+007B 3003           00237           movlw     d2510Rd              ; MCP2510 read instruction
+007C 20BA           00238           call      LoadSPIByte
+007D 084A           00239           movfw     b2510RegAdr         ; get address
+007E 20BA           00240           call      LoadSPIByte
+007F 3001           00241           movlw     1                   ; expect 1 byte answer
+0080 20BD           00242           call      LoadSPIZeros
+0081 20C6           00243           call      ExchangeSPI
+0082 20D2           00244           call      WaitSPIExchange
+0083 0851           00245           movfw     pSPIBufBase+2
+0084 0008           00246           return
+                    00247 
+                    00248 ;**********************************************************
+                    00249 ;Wrt2510Reg
+                    00250 ;         Write byte in b2510RegData to 2510 register at location in W. 
+                    00251 ;         Uses b2510RegAdr to hold address.
+                    00252 ;// Function Name: SPI_Write(uint address)
+                    00253 ;**********************************************************
+0085                00254 Wrt2510Reg
+0085 00CA           00255           movwf     b2510RegAdr         ; save
+0086 20B5           00256           call      InitSPIBuf
+0087 3002           00257           movlw     d2510Wrt             ; MCP2510 write instruction
+0088 20BA           00258           call      LoadSPIByte
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 27
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0089 084A           00259           movfw     b2510RegAdr         ; get address
+008A 20BA           00260           call      LoadSPIByte
+008B 084B           00261           movfw     b2510RegData        ; get data
+008C 20BA           00262           call      LoadSPIByte
+008D 20C6           00263           call      ExchangeSPI
+008E 20D2           00264           call      WaitSPIExchange
+008F 0008           00265           return
+                    00266 
+                    00267 
+                    00268 ;**********************************************************
+                    00269 ;BitMod2510
+                    00270 ;// Function Name: SPI_BitMod()
+                    00271 ;         Write data in b2510RegData using mask in b2510RegMask to 
+                    00272 ;         address in W. Uses b2510RegAdr to hold address.
+                    00273 ;**********************************************************
+0090                00274 BitMod2510
+0090 00CA           00275           movwf     b2510RegAdr         ; save
+0091 20B5           00276           call      InitSPIBuf
+                    00277 
+0092 3005           00278           movlw     d2510BitMod         ; MCP2510 bit modify instruction
+0093 20BA           00279           call      LoadSPIByte
+                    00280 
+0094 084A           00281           movfw     b2510RegAdr         ; address
+0095 20BA           00282           call      LoadSPIByte
+                    00283 
+0096 084C           00284           movfw     b2510RegMask        ; mask
+0097 20BA           00285           call      LoadSPIByte
+                    00286 
+0098 084B           00287           movfw     b2510RegData        ; data
+0099 20BA           00288           call      LoadSPIByte
+                    00289 
+009A 20C6           00290           call      ExchangeSPI
+009B 20D2           00291           call      WaitSPIExchange
+009C 0008           00292           return
+                    00293 
+                    00294 
+                    00295 ;**********************************************************
+                    00296 ;Rts2510
+                    00297 ;         Request to send to MCP2510.
+                    00298 ;         Send the request to send instruction to the CANbus Controller ORed
+                    00299 ;         with value in W.  Uses b2510RegData.
+                    00300 ;// Function Name: SPI_Reset()
+                    00301 ;**********************************************************
+009D                00302 Rts2510
+009D 00CB           00303           movwf     b2510RegData
+009E 20B5           00304           call      InitSPIBuf
+                    00305 
+009F 3080           00306           movlw     d2510RTS            ; MCP2510 RTS instruction
+00A0 044B           00307           iorwf     b2510RegData,W      ; get data and OR it with RTS
+00A1 20BA           00308           call      LoadSPIByte
+                    00309 
+00A2 20C6           00310           call      ExchangeSPI
+00A3 20D2           00311           call      WaitSPIExchange
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 28
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+00A4 0008           00312           return
+                    00313 
+                    00314 
+                    00315 ;**********************************************************
+                    00316 ;Reset2510
+                    00317 ;         Reset MCP2510.
+                    00318 ;// Function Name: SPI_Reset()
+                    00319 ;**********************************************************
+00A5                00320 Reset2510
+00A5 20B5           00321           call      InitSPIBuf
+00A6 30C0           00322           movlw     d2510Reset           ; MCP2510 reset instruction
+00A7 20BA           00323           call      LoadSPIByte
+00A8 20C6           00324           call      ExchangeSPI
+00A9 20D2           00325           call      WaitSPIExchange
+00AA 0008           00326           return
+                    00327 
+                    00328 
+                    00329 
+                    00330 ;**********************************************************
+                    00331 ;***************** LOCAL - DON'T CALL DIRECTLY ************
+                    00332 ;**********************************************************
+                    00333 
+                    00334 ;**********************************************************
+                    00335 ;InitSPIPort
+                    00336 ;         Intialize SPI port
+                    00337 ;**********************************************************
+00AB                00338 InitSPIPort
+                    00339         BANK0
+00AB 1283               M         bcf     STATUS,5    ; Select page 0
+00AC 1294           00340           bcf       _SSPEN         ; disable SPI     
+00AD 3011           00341           movlw     0x11           ; SPI Master, Idle high, Fosc/16
+00AE 0094           00342           movwf     SSPCON
+00AF 1694           00343           bsf       _SSPEN         ; enable SPI     
+00B0 118C           00344           bcf       _SSPIF         ; clear interrupt flag
+                    00345           BANK1
+00B1 1683               M         bsf     STATUS,5    ; Select page 1
+00B2 158C           00346           bsf       _SSPIE_P       ; SSP int enable (BANK 1)
+                    00347           BANK0
+00B3 1283               M         bcf     STATUS,5    ; Select page 0
+00B4 0008           00348           return
+                    00349 
+                    00350 ;**********************************************************
+                    00351 ;InitSPIBuf
+                    00352 ;         Initializes SPI buffer for transaction.  Sets up
+                    00353 ;         FSR as buffer pointer.
+                    00354 ;**********************************************************
+00B5                00355 InitSPIBuf
+00B5 01CD           00356           clrf      bSPICnt
+00B6 304F           00357           movlw     pSPIBufBase
+00B7 00CE           00358           movwf     pSPIBuf
+00B8 0084           00359           movwf     FSR
+00B9 0008           00360           return
+                    00361 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 29
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00362 ;**********************************************************
+                    00363 ;LoadSPIByte
+                    00364 ;         Load byte in W to SPI buffer.  Assumes FSR is pointer.
+                    00365 ;**********************************************************
+00BA                00366 LoadSPIByte
+00BA 0080           00367           movwf     INDF
+00BB 0A84           00368           incf      FSR,F
+00BC 0008           00369           return
+                    00370 
+                    00371 ;**********************************************************
+                    00372 ;LoadSPIZeros
+                    00373 ;         Load number of zeros in W to SPI buffer.  
+                    00374 ;         Assumes FSR is pointer.
+                    00375 ;**********************************************************
+00BD                00376 LoadSPIZeros
+00BD 39FF           00377           andlw     0xFF
+                    00378           skipNZ
+00BE 1903               M         btfsc   _Z
+00BF 0008           00379           return                        ; finished
+00C0 0180           00380           clrf      INDF
+00C1 0A84           00381           incf      FSR,F
+00C2 3EFF           00382           addlw     0xFF                ; Subtract 1 from W
+                    00383           jmpNZ     LoadSPIZeros
+00C3 1D03               M         btfss   _Z
+00C4 28BD               M         goto    LoadSPIZeros
+00C5 0008           00384           return
+                    00385 
+                    00386 ;**********************************************************
+                    00387 ;ExchangeSPI
+                    00388 ;         Initiate SPI transaction.  
+                    00389 ;**********************************************************
+00C6                00390 ExchangeSPI
+                    00391      ;; Get number of bytes to exchange
+                    00392           bV2bV     FSR,bSPICnt
+00C6 0804               M         movf    FSR,W
+00C7 00CD               M         movwf   bSPICnt
+00C8 304F           00393           movlw     pSPIBufBase
+00C9 02CD           00394           subwf     bSPICnt,F
+                    00395 
+                    00396           skipNZ
+00CA 1903               M         btfsc   _Z
+00CB 0008           00397           return                        ; nothing to exchange
+                    00398 
+00CC 304F           00399           movlw     pSPIBufBase
+00CD 00CE           00400           movwf     pSPIBuf
+                    00401 
+                    00402      ;; Load 1st byte to begin exchange
+00CE 1085           00403           bcf       tp2510_CS_           ; CS_ for 2510 chip
+00CF 084F           00404           movfw     pSPIBufBase         ; get 1st byte in buffer
+00D0 0093           00405           movwf     SSPBUF              ; send it
+00D1 0008           00406           return
+                    00407 
+                    00408 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 30
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00409 ;**********************************************************
+                    00410 ;WaitSPIExchange
+                    00411 ;         Wait for SPI transaction to be completed.
+                    00412 ;**********************************************************
+00D2                00413 WaitSPIExchange
+                    00414           jmpFneZ   bSPICnt,WaitSPIExchange
+00D2 08CD               M         movf    bSPICnt,F
+00D3 1D03               M         btfss   _Z
+00D4 28D2               M         goto    WaitSPIExchange
+00D5 0008           00415           return
+                    00416 
+                    00344 #include "a2d3201.asm"        ; MCP3201 AD routines
+                    00001 
+                    00002 ;**********************************************************
+                    00003 ;Read3201
+                    00004 ;         This functions reads MCP3201 and store the result 
+                    00005 ;         in iA2DValue as a 12 bit value.
+                    00006 ;**********************************************************
+00D6                00007 Read3201
+                    00008 
+00D6 1086           00009           bcf       tpA2D_CS_           ; CS_ for 3201 A2D chip
+                    00010 
+00D7 20B5           00011           call      InitSPIBuf
+00D8 3002           00012           movlw     2                   ; expect 2 bytes
+00D9 20BD           00013           call      LoadSPIZeros
+                    00014 
+                    00015      ;; Initiate SPI transaction.  
+                    00016      ;; Get number of bytes to exchange
+                    00017           bV2bV     FSR,bSPICnt
+00DA 0804               M         movf    FSR,W
+00DB 00CD               M         movwf   bSPICnt
+00DC 304F           00018           movlw     pSPIBufBase
+00DD 02CD           00019           subwf     bSPICnt,F
+                    00020 
+00DE 304F           00021           movlw     pSPIBufBase
+00DF 00CE           00022           movwf     pSPIBuf
+                    00023 
+                    00024      ;; Load 1st byte to begin exchange
+00E0 084F           00025           movfw     pSPIBufBase         ; get 1st byte in buffer
+00E1 0093           00026           movwf     SSPBUF              ; send it
+                    00027 
+00E2 20D2           00028           call      WaitSPIExchange
+                    00029 
+00E3 1486           00030           bsf       tpA2D_CS_           ; CS_ for 3201 A2D chip
+                    00031 
+                    00032           bV2bV     pSPIBufBase,iA2DValue+1
+00E4 084F               M         movf    pSPIBufBase,W
+00E5 00B6               M         movwf   iA2DValue+1
+                    00033           bV2bV     pSPIBufBase+1,iA2DValue
+00E6 0850               M         movf    pSPIBufBase+1,W
+00E7 00B5               M         movwf   iA2DValue
+                    00034 
+                    00035      ;; Shift right by 1 to remove extra b1 bit
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 31
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00036           iShiftR   iA2DValue
+00E8 1003               M         bcf      _C               ; clear carry bit    
+00E9 0CB6               M         rrf      iA2DValue+1,F
+00EA 0CB5               M         rrf      iA2DValue,F
+                    00037 
+                    00038      ;; remove dummy upper 4 bits
+00EB 300F           00039           movlw     0x0F
+00EC 05B6           00040           andwf     iA2DValue+1,F
+00ED 0008           00041           return
+                    00042 
+                    00043 
+                    00345 
+                    00346 ;***************** Local Interrupt Handlers ****************************
+                    00347 
+                    00348           
+                    00349 ;**********************************************************
+                    00350 ;jIntTimer1 
+                    00351 ;         Timer1 rollover interrupt.
+                    00352 ;
+                    00353 ;**********************************************************
+00EE                00354 jIntTimer1  ; Timer1 overflow interrupt flag
+00EE 100C           00355           bcf       _TMR1IF        ; timer1 rollover interrupt flag
+                    00356           intInc    iTimer1
+00EF 0AB1               M         incf    iTimer1,F
+                        M         skipNZ
+00F0 1903               M         btfsc   _Z
+00F1 0AB2               M         incf    iTimer1+1,F
+                    00357 
+                    00358           jmpFeqZ   bXmitClk,IntReturn
+00F2 08B4               M         movf    bXmitClk,F
+00F3 1903               M         btfsc   _Z
+00F4 2811               M         goto    IntReturn
+                    00359           
+00F5 0BB4           00360           decfsz    bXmitClk,F     ; Countdown to xmit next message
+00F6 2811           00361           goto      IntReturn
+                    00362 
+                    00363      ; Countdown to xmit next message
+                    00364 
+00F7 1626           00365           bsf       tbTxMsg        ; xmit next CAN msg     
+00F8 2811           00366           goto      IntReturn
+                    00367 
+                    00368 ;**********************************************************
+                    00369 ;IntSPI                                 
+                    00370 ; 
+                    00371 ; A single buffer, at pSPIBufBase, is used for both SPI receive and
+                    00372 ; transmit.  When a byte is removed from the buffer to transmit it is
+                    00373 ; replaced by the byte received.  
+                    00374 ; 
+                    00375 ; When here the buffer pointer, pSPIBuf, points to the last byte loaded 
+                    00376 ; for transmission. This is the location that the received byte will be stored.
+                    00377 ; 
+                    00378 ; When here the count, bSPICnt, contains the number of bytes remaining
+                    00379 ; to be received.  This is one less then the number remaining to be
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 32
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00380 ; transmitted.  When bSPICnt reaches zero the transaction is complete.
+                    00381 ; 
+                    00382 ;         
+                    00383 ;**********************************************************
+00F9                00384 IntSPI    
+00F9 118C           00385           bcf       _SSPIF              ; clear interrupt flag
+                    00386 
+                    00387      ;; Transfer received byte to the next location in the buffer
+                    00388           bV2bV     pSPIBuf,FSR
+00FA 084E               M         movf    pSPIBuf,W
+00FB 0084               M         movwf   FSR
+00FC 0ACE           00389           incf      pSPIBuf,F
+                    00390 
+00FD 0813           00391           movfw     SSPBUF              ; get data & clear buffer flag
+00FE 0080           00392           movwf     INDF                ; put it into SPI buffer
+                    00393 
+00FF 0BCD           00394           decfsz    bSPICnt,F
+0100 2903           00395           goto      jIntSPI1            ; More bytes to send
+                    00396 
+                    00397      ;; Last transaction completed
+0101 1485           00398           bsf       tp2510_CS_           ; CS_ for 2510 chip
+0102 2811           00399           goto      IntReturn
+                    00400 
+0103                00401 jIntSPI1
+                    00402      ;; Fetch next byte from buffer and load it for transmission
+0103 0A84           00403           incf      FSR,F
+0104 0800           00404           movfw     INDF                ; get byte from buffer
+0105 0093           00405           movwf     SSPBUF              ; send it
+0106 2811           00406           goto      IntReturn
+                    00407 
+                    00408 
+                    00409 ;**********************************************************
+                    00410 ;**********************************************************
+                    00411 ;**********************************************************
+                    00412 
+0107                00413 HardStart 
+0107 221E           00414           call      Init
+                    00415 
+                    00416      ;; Make sure no chips are selected
+0108 1485           00417           bsf       tp2510_CS_   ; CS_ for 2510 chip
+                    00418 
+                    00419      ;; Read DIP switch and create bBaseRecID and bSwXmitID
+                    00420 
+                    00421      ;; Rec ID bits are at pins 0,1 of PORTC and are logic high = 1
+0109 0807           00422           movfw     PORTC
+010A 3903           00423           andlw     0x03
+010B 201B           00424           call      RxIDTable
+010C 00BB           00425           movwf     bBaseRecID
+                    00426 
+                    00427      ;; Xmit ID bits are at pins 6,7 of PORTC and are logic low = 1
+010D 0E07           00428           swapf     PORTC,W
+010E 00BA           00429           movwf     bSwXmitID
+010F 0CBA           00430           rrf   bSwXmitID,F
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 33
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0110 0C3A           00431           rrf   bSwXmitID,W
+0111 3903           00432           andlw     0x03
+0112 2020           00433           call      TxIDTable
+0113 00BA           00434           movwf     bSwXmitID
+                    00435 
+                    00436 
+                    00437      ;; ----------------- One time calculations ----------------
+                    00438 
+                    00439      ;; Setup SPI port
+0114 20AB           00440           call      InitSPIPort
+                    00441 
+                    00442      ;; Wait 28 mS for 2510 to initialize ( there is no significance to 28 mS -
+                    00443      ;; we just selected a large time since time is not critical)
+                    00444           Set1HClock bGenClk,100   ; 277.77 uSec tics
+0115 080F               M           movfw     TMR1H
+0116 3E64               M           addlw     100
+0117 00B3               M           movwf     bGenClk
+0118                00445 jInit5
+                    00446           jmp1HNotYet bGenClk,jInit5
+                        M 
+0118 080F               M           movfw     TMR1H
+0119 0233               M           subwf     bGenClk,W
+011A 3980               M           andlw     0x80
+                        M           jmpZ      jInit5
+011B 1903               M         btfsc   _Z
+011C 2918               M         goto    jInit5
+                    00447 
+                    00448 
+                    00449      ;; Setup all 2510 registers
+011D 21AA           00450           call      Init2510
+                    00451 
+011E 1626           00452           bsf       tbTxMsg             ; xmit flag
+                    00453 
+                    00454 ;; --------------------------------------------------------
+                    00455 ;; ----------- MAIN LOOP ----------------------------------
+                    00456 ;; --------------------------------------------------------
+                    00457 
+011F 0064           00458 jMainLoop clrwdt
+                    00459 
+                    00460 
+                    00461 ;;====================== XMIT CODE ========================
+                    00462 
+                    00463           jmpClr    tbTxMsg,jMain10     ; not time to xmit next CAN msg yet
+                        M 
+0120 1E26               M         btfss   bGenFlags1,4
+0121 2958               M         goto    jMain10
+0122 1226           00464           bcf       tbTxMsg             ; reset xmit flag
+                    00465 
+                    00466      ;; Reload counter
+0123 3002           00467           movlw     2              ; 65 mS units
+0124 00B4           00468           movwf     bXmitClk       ; Countdown to xmit next message
+                    00469 
+                    00470           jmpFeqL   bXmitID,0xFF,jMain10 ; Transmission turned off
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 34
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0125 083D               M         movf    bXmitID,W
+0126 3CFF               M           sublw   0xFF
+0127 1903               M         btfsc   _Z
+0128 2958               M         goto    jMain10
+                    00471 
+                    00472      ;; Time to xmit next CAN message.  Select source of message and ID
+                    00473      ;; to use for transmission
+                    00474 
+                    00475 ;; <<<<< Analog Input Board >>>>>
+                    00476 
+                    00477           jmpFeqL   bNextMsgType,0,Xmit3201   
+0129 083E               M         movf    bNextMsgType,W
+012A 3C00               M           sublw   0
+012B 1903               M         btfsc   _Z
+012C 2932               M         goto    Xmit3201
+                    00478           jmpFeqL   bNextMsgType,1,XmitRA0   
+012D 083E               M         movf    bNextMsgType,W
+012E 3C01               M           sublw   1
+012F 1903               M         btfsc   _Z
+0130 2937               M         goto    XmitRA0
+0131 293E           00479           goto      jMain8
+                    00480 
+                    00481 ;********** POT **********     
+                    00482 
+0132                00483 Xmit3201
+0132 20D6           00484           call      Read3201            ; read 3201 AD
+0133 083A           00485           movfw     bSwXmitID           ; Use DIP Tx address for transmission
+0134 00BD           00486           movwf     bXmitID
+0135 0ABE           00487           incf      bNextMsgType,F      ; Next time use next source and ID
+0136 293E           00488           goto      jMain8  
+                    00489 
+0137                00490 XmitRA0                                 ;; Use Pot as input
+0137 3040           00491           movlw     dA2DRA0             ; fosc/8 clk, RA0, A/D off
+0138 2170           00492           call      ReadA2D             ; Read A/D port in W
+0139 083A           00493           movfw     bSwXmitID           ; Use DIP Tx address for transmission
+013A 3E01           00494           addlw     0x01
+013B 00BD           00495           movwf     bXmitID
+013C 01BE           00496           clrf      bNextMsgType        ; clear next message
+013D 293E           00497           goto      jMain8
+                    00498 
+013E                00499 jMain8
+                    00500           
+                    00501      ;; Wait for pending messages to be sent (ALL BUFFERS)
+                    00502           bL2bV     0x08,b2510RegMask
+013E 3008               M         movlw   0x08
+013F 00CC               M         movwf   b2510RegMask
+0140 3030           00503           movlw     TXB0CTRL
+0141 206A           00504           call      WaitANDeqZ
+                    00505 
+                    00506      ;; Send CAN message with 
+                    00507      ;;    ID = bXmitID 
+                    00508      ;;    Two data bytes: iA2DValue,iA2DValue+1
+                    00509 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 35
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00510           SPI_WriteV TXB0SIDH,bXmitID    ; Message ID
+0142 083D               M           movfw     bXmitID
+0143 00CB               M           movwf     b2510RegData
+0144 3031               M           movlw     0x31
+0145 2085               M           call      Wrt2510Reg
+                    00511           SPI_WriteL TXB0SIDL,0x00       ; Send message - lower bits 0
+0146 3000               M           movlw     0x00
+0147 00CB               M           movwf     b2510RegData
+0148 3032               M           movlw     0x32
+0149 2085               M           call      Wrt2510Reg
+                    00512           SPI_WriteL TXB0DLC,0x02        ; 2 data bytes
+014A 3002               M           movlw     0x02
+014B 00CB               M           movwf     b2510RegData
+014C 3035               M           movlw     0x35
+014D 2085               M           call      Wrt2510Reg
+                    00513 
+                    00514      ;; Send least significant byte first
+                    00515           SPI_WriteV TXB0D0,iA2DValue
+014E 0835               M           movfw     iA2DValue
+014F 00CB               M           movwf     b2510RegData
+0150 3036               M           movlw     0x36
+0151 2085               M           call      Wrt2510Reg
+                    00516           SPI_WriteV TXB0D1,iA2DValue+1
+0152 0836               M           movfw     iA2DValue+1
+0153 00CB               M           movwf     b2510RegData
+0154 3037               M           movlw     0x37
+0155 2085               M           call      Wrt2510Reg
+                    00517           SPI_Rts   RTS0                ; Transmit buffer 0
+0156 3001               M           movlw     0x01
+0157 209D               M           call      Rts2510
+                    00518 
+0158                00519 jMain10
+                    00520 
+                    00521 ;;====================== RECEIVE CODE ========================
+                    00522 
+0158 2025           00523           call      CheckCANMsg
+                    00524 
+                    00525           jmpClr    tbRxMsgPend,jMainLoop
+                        M 
+0159 1DA6               M         btfss   bGenFlags1,3
+015A 291F               M         goto    jMainLoop
+                    00526 
+                    00527      ;; new CAN message received
+                    00528 
+015B 2189           00529           call      ParseCAN
+015C 11A6           00530           bcf       tbRxMsgPend         ; new CAN message received
+015D 291F           00531           goto      jMainLoop
+                    00532 
+                    00533 ;**********************************************************
+                    00534 ;OutputPWM
+                    00535 ;       OutputPWM - Uses PWM1 output.
+                    00536 ;        
+                    00537 ;**********************************************************
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 36
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+015E                00538 OutputPWM    
+015E 0837           00539           movfw     bPWMValue   ; 8 bit PWM value   
+015F 00AD           00540           movwf     iA
+0160 01AE           00541           clrf      iA+1
+                    00542 
+                    00543      ;; W = 0 - 255.  Load into PWM register.     
+                    00544      ;; load LOWER 2 bits into CCP1CON bits 5,4
+                    00545      ;; load UPPER 6 bits (shifted right by 2 ) into CCPR1
+                    00546      ;; this is high res 8 bit mode (upper 2 bits of 10 bit word are zero)
+0161 082D           00547           movf     iA,W       ; low byte to W
+0162 01AE           00548           clrf     iA+1
+0163 0CAD           00549           rrf      iA,F       ; low bit to carry          
+0164 0CAE           00550           rrf      iA+1,F      ; move carry into upper bit 
+0165 0CAD           00551           rrf      iA,F       ; low bit to carry          
+0166 0CAE           00552           rrf      iA+1,F      ; move carry into upper bit
+0167 0CAE           00553           rrf      iA+1,F      ; move to 6,5
+0168 0C2E           00554           rrf      iA+1,W      ; move to 5,4 in W
+0169 3930           00555           andlw    B'00110000'   ; mask other bits
+016A 380C           00556           iorlw    B'00001100'   ; turn on PWM mode
+016B 0097           00557           movwf    CCP1CON       ; set PWM1 and lower 2 bits
+                    00558      ;; get upper 6 bits
+016C 082D           00559           movf     iA,W
+016D 393F           00560           andlw    B'00111111'   ; mask upper 2 bits
+016E 0095           00561           movwf    CCPR1L           
+                    00562                               
+016F 0008           00563           return
+                    00564 
+                    00565 ;**********************************************************
+                    00566 ;ReadA2D
+                    00567 ;         This functions reads analog input and stores the result 
+                    00568 ;         in iA2DValue as a 12 bit value.  Value in W is used to set
+                    00569 ;         ADCON0 to select correct port.
+                    00570 ;**********************************************************
+0170                00571 ReadA2D
+                    00572 
+                    00573      ;; setup A/D to select port, etc
+0170 009F           00574           movwf     ADCON0
+                    00575 
+                    00576      ;; turn on A/D 
+0171 141F           00577           bsf      ADCON0,0        ;A/D on
+                    00578      ;; allow 50us for settling
+0172 3019           00579           movlw     25
+0173 00AC           00580           movwf     bCnt
+0174                00581 ReadAD10 
+0174 0BAC           00582           decfsz    bCnt,F
+0175 2974           00583           goto      ReadAD10
+                    00584 
+                    00585      ;; begin conversion
+0176 151F           00586           bsf       ADCON0,2           ; GO
+                    00587 ReadAD20  jmpSet    ADCON0,2,ReadAD20   ; wait for done bit
+0177 191F               M         btfsc   ADCON0,2
+0178 2977               M         goto    ReadAD20
+                    00588 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 37
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0179 081E           00589           movf      ADRES,W
+017A 00B5           00590           movwf     iA2DValue
+017B 01B6           00591           clrf      iA2DValue+1
+                    00592 
+                    00593      ;; Convert to 12 bit
+                    00594           iShiftL   iA2DValue
+017C 1003               M         bcf      _C                ; clear carry bit    
+017D 0DB5               M         rlf      iA2DValue,F
+017E 0DB6               M         rlf      iA2DValue+1,F
+                    00595           iShiftL   iA2DValue
+017F 1003               M         bcf      _C                ; clear carry bit    
+0180 0DB5               M         rlf      iA2DValue,F
+0181 0DB6               M         rlf      iA2DValue+1,F
+                    00596           iShiftL   iA2DValue
+0182 1003               M         bcf      _C                ; clear carry bit    
+0183 0DB5               M         rlf      iA2DValue,F
+0184 0DB6               M         rlf      iA2DValue+1,F
+                    00597           iShiftL   iA2DValue
+0185 1003               M         bcf      _C                ; clear carry bit    
+0186 0DB5               M         rlf      iA2DValue,F
+0187 0DB6               M         rlf      iA2DValue+1,F
+0188 0008           00598           return
+                    00599 
+                    00600 ;******************************************************
+                    00601 ;ParseCAN <<<<<INPUTS>>>>>
+                    00602 ;         Parse message. Assumes message is two byte 12 bit data.
+                    00603 ;         Uses bBaseRecID and bRecIDNext to accept message for PWM output.
+                    00604 ;******************************************************
+0189                00605 ParseCAN
+                    00606 
+                    00607 ;********** Analog In Board **********
+                    00608 
+0189 300F           00609           movlw     b'00001111'
+018A 0540           00610           andwf     iRecID_H,W
+018B 00AD           00611           movwf     iA 
+                    00612           jmpFeqL   iA,0x0,IDx0             ;check for ID x0
+018C 082D               M         movf    iA,W
+018D 3C00               M           sublw   0x0
+018E 1903               M         btfsc   _Z
+018F 2991               M         goto    IDx0
+0190 29A9           00613           goto      jParCANRet          
+                    00614 
+0191                00615 IDx0                                              ;; x0 input send PWM to lamp
+                    00616      ;; 12 bits of data 
+                    00617           bV2bV     pRecDataBase,iRecValue
+0191 0842               M         movf    pRecDataBase,W
+0192 00B8               M         movwf   iRecValue
+                    00618           bV2bV     pRecDataBase+1,iRecValue+1
+0193 0843               M         movf    pRecDataBase+1,W
+0194 00B9               M         movwf   iRecValue+1
+                    00619 
+                    00620      ;; new PWM value pending
+                    00621 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 38
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00622           bV2bV     iRecValue,iA
+0195 0838               M         movf    iRecValue,W
+0196 00AD               M         movwf   iA
+                    00623           bV2bV     iRecValue+1,iA+1              ; 12 bit received value
+0197 0839               M         movf    iRecValue+1,W
+0198 00AE               M         movwf   iA+1
+                    00624 
+                    00625      ;; convert to 8 for PWM out
+                    00626           iShiftR   iA
+0199 1003               M         bcf      _C               ; clear carry bit    
+019A 0CAE               M         rrf      iA+1,F
+019B 0CAD               M         rrf      iA,F
+                    00627           iShiftR   iA
+019C 1003               M         bcf      _C               ; clear carry bit    
+019D 0CAE               M         rrf      iA+1,F
+019E 0CAD               M         rrf      iA,F
+                    00628           iShiftR   iA
+019F 1003               M         bcf      _C               ; clear carry bit    
+01A0 0CAE               M         rrf      iA+1,F
+01A1 0CAD               M         rrf      iA,F
+                    00629           iShiftR   iA
+01A2 1003               M         bcf      _C               ; clear carry bit    
+01A3 0CAE               M         rrf      iA+1,F
+01A4 0CAD               M         rrf      iA,F
+                    00630 
+                    00631      ;; Convert to 8 bit
+                    00632           bV2bV     iA,bPWMValue
+01A5 082D               M         movf    iA,W
+01A6 00B7               M         movwf   bPWMValue
+01A7 215E           00633           call      OutputPWM    
+01A8 29A9           00634           goto      jParCANRet
+                    00635 
+01A9                00636 jParCANRet
+01A9 0008           00637           return
+                    00638 
+                    00639 ;******************************************************
+                    00640 ;Init2510
+                    00641 ;*  Function:   Init_MCP2510()
+                    00642 ;*      Place MCP2510 initialization here...
+                    00643 ;*******************************************************
+01AA                00644 Init2510
+                    00645      ;; Reset 2510
+01AA 20A5           00646           call      Reset2510
+                    00647 
+                    00648      ;; set CLKOUT prescaler to div by 4
+                    00649           bL2bV     0x03,b2510RegMask
+01AB 3003               M         movlw   0x03
+01AC 00CC               M         movwf   b2510RegMask
+                    00650           bL2bV     0x02,b2510RegData
+01AD 3002               M         movlw   0x02
+01AE 00CB               M         movwf   b2510RegData
+01AF 300F           00651           movlw     CANCTRL
+01B0 2090           00652           call      BitMod2510
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 39
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00653 
+                    00654 ;Set physical layer configuration 
+                    00655 ;
+                    00656 ;     Fosc = 16MHz
+                    00657 ;     BRP        =   7  (divide by 8)
+                    00658 ;     Sync Seg   = 1TQ
+                    00659 ;     Prop Seg   = 1TQ
+                    00660 ;     Phase Seg1 = 3TQ
+                    00661 ;     Phase Seg2 = 3TQ
+                    00662 ;
+                    00663 ;    TQ = 2 * (1/Fosc) * (BRP+1) 
+                    00664 ;     Bus speed = 1/(Total # of TQ) * TQ
+                    00665 ;
+                    00666           SPI_WriteL CNF1,0x07           ; set BRP to div by 8
+01B1 3007               M           movlw     0x07
+01B2 00CB               M           movwf     b2510RegData
+01B3 302A               M           movlw     0x2A
+01B4 2085               M           call      Wrt2510Reg
+                    00667 
+                    00668 ;#define BTLMODE_CNF3    0x80
+                    00669 ;#define SMPL_1X         0x00
+                    00670 ;#define PHSEG1_3TQ      0x10
+                    00671 ;#define PRSEG_1TQ       0x00
+                    00672           SPI_WriteL CNF2,0x90
+01B5 3090               M           movlw     0x90
+01B6 00CB               M           movwf     b2510RegData
+01B7 3029               M           movlw     0x29
+01B8 2085               M           call      Wrt2510Reg
+                    00673 
+                    00674 ;#define PHSEG2_3TQ      0x02
+                    00675           SPI_WriteL CNF3,0x02
+01B9 3002               M           movlw     0x02
+01BA 00CB               M           movwf     b2510RegData
+01BB 3028               M           movlw     0x28
+01BC 2085               M           call      Wrt2510Reg
+                    00676 
+                    00677 ;
+                    00678      ;; Configure Receive buffer 0 Mask and Filters 
+                    00679      ;; Receive buffer 0 will not be used
+                    00680           SPI_WriteL RXM0SIDH,0xFF
+01BD 30FF               M           movlw     0xFF
+01BE 00CB               M           movwf     b2510RegData
+01BF 3020               M           movlw     0x20
+01C0 2085               M           call      Wrt2510Reg
+                    00681           SPI_WriteL RXM0SIDL,0xFF
+01C1 30FF               M           movlw     0xFF
+01C2 00CB               M           movwf     b2510RegData
+01C3 3021               M           movlw     0x21
+01C4 2085               M           call      Wrt2510Reg
+                    00682 
+                    00683           SPI_WriteL RXF0SIDH,0xFF
+01C5 30FF               M           movlw     0xFF
+01C6 00CB               M           movwf     b2510RegData
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 40
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+01C7 3000               M           movlw     0x00
+01C8 2085               M           call      Wrt2510Reg
+                    00684           SPI_WriteL RXF0SIDL,0xFF
+01C9 30FF               M           movlw     0xFF
+01CA 00CB               M           movwf     b2510RegData
+01CB 3001               M           movlw     0x01
+01CC 2085               M           call      Wrt2510Reg
+                    00685 
+                    00686           SPI_WriteL RXF1SIDH,0xFF
+01CD 30FF               M           movlw     0xFF
+01CE 00CB               M           movwf     b2510RegData
+01CF 3004               M           movlw     0x04
+01D0 2085               M           call      Wrt2510Reg
+                    00687           SPI_WriteL RXF1SIDL,0xFF
+01D1 30FF               M           movlw     0xFF
+01D2 00CB               M           movwf     b2510RegData
+01D3 3005               M           movlw     0x05
+01D4 2085               M           call      Wrt2510Reg
+                    00688 
+                    00689      ;; Configure Receive Buffer 1 Mask and Filters 
+                    00690           SPI_WriteL RXM1SIDH,0xFF 
+01D5 30FF               M           movlw     0xFF
+01D6 00CB               M           movwf     b2510RegData
+01D7 3024               M           movlw     0x24
+01D8 2085               M           call      Wrt2510Reg
+                    00691           SPI_WriteL RXM1SIDL,0xE0
+01D9 30E0               M           movlw     0xE0
+01DA 00CB               M           movwf     b2510RegData
+01DB 3025               M           movlw     0x25
+01DC 2085               M           call      Wrt2510Reg
+                    00692 
+                    00693      ;; Initialize Filter 2 to match x0 bBaseRecID from  DIP switch
+                    00694           SPI_WriteV RXF2SIDH,bBaseRecID
+01DD 083B               M           movfw     bBaseRecID
+01DE 00CB               M           movwf     b2510RegData
+01DF 3008               M           movlw     0x08
+01E0 2085               M           call      Wrt2510Reg
+                    00695           SPI_WriteL RXF2SIDL,0x00       ; Make sure EXIDE bit (bit 3) is set correctly in filter
+01E1 3000               M           movlw     0x00
+01E2 00CB               M           movwf     b2510RegData
+01E3 3009               M           movlw     0x09
+01E4 2085               M           call      Wrt2510Reg
+                    00696 
+                    00697      ;; Initialize Filter 3 to match x1 from DIP switch
+01E5 0ABB           00698           incf       bBaseRecID,F
+                    00699           SPI_WriteV RXF3SIDH,bBaseRecID
+01E6 083B               M           movfw     bBaseRecID
+01E7 00CB               M           movwf     b2510RegData
+01E8 3010               M           movlw     0x10
+01E9 2085               M           call      Wrt2510Reg
+                    00700           SPI_WriteL RXF3SIDL,0x00
+01EA 3000               M           movlw     0x00
+01EB 00CB               M           movwf     b2510RegData
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 41
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+01EC 3011               M           movlw     0x11
+01ED 2085               M           call      Wrt2510Reg
+                    00701 
+                    00702      ;; Initialize Filter 4 to match x2 from DIP switch
+01EE 0ABB           00703           incf       bBaseRecID,F
+                    00704           SPI_WriteV RXF4SIDH,bBaseRecID
+01EF 083B               M           movfw     bBaseRecID
+01F0 00CB               M           movwf     b2510RegData
+01F1 3014               M           movlw     0x14
+01F2 2085               M           call      Wrt2510Reg
+                    00705           SPI_WriteL RXF4SIDL,0x00       
+01F3 3000               M           movlw     0x00
+01F4 00CB               M           movwf     b2510RegData
+01F5 3015               M           movlw     0x15
+01F6 2085               M           call      Wrt2510Reg
+                    00706 
+                    00707      ;; Initialize Filter 5 to match x3 from DIP switch
+01F7 0ABB           00708           incf       bBaseRecID,F
+                    00709           SPI_WriteV RXF5SIDH,bBaseRecID
+01F8 083B               M           movfw     bBaseRecID
+01F9 00CB               M           movwf     b2510RegData
+01FA 3018               M           movlw     0x18
+01FB 2085               M           call      Wrt2510Reg
+                    00710           SPI_WriteL RXF5SIDL,0x00       
+01FC 3000               M           movlw     0x00
+01FD 00CB               M           movwf     b2510RegData
+01FE 3019               M           movlw     0x19
+01FF 2085               M           call      Wrt2510Reg
+                    00711 
+0200 30F0           00712           movlw     b'11110000'
+0201 05BB           00713           andwf     bBaseRecID,F
+                    00714 
+                    00715      ;; Disable all MCP2510 Interrupts
+                    00716           bL2bV     0x00,b2510RegData
+0202 3000               M         movlw   0x00
+0203 00CB               M         movwf   b2510RegData
+0204 302B           00717           movlw     CANINTE
+0205 2085           00718           call      Wrt2510Reg
+                    00719 
+                    00720      ;; Sets normal mode
+0206 205E           00721           call      SetNormalMode
+0207 0008           00722           return
+                    00723 
+                    00724 ;**********************************************************
+                    00725 ;ProcessSPI     
+                    00726 ;
+                    00727 ;**********************************************************
+0208                00728 ProcessSPI
+                    00729           skipSet   bSPICnt,2
+0208 1D4D               M         btfss   bSPICnt,2
+                    00730      ;; buffer not full yet
+0209 0008           00731           return
+                    00732 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 42
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00733      ;; disable SPI interupt
+                    00734           BANK1
+020A 1683               M         bsf     STATUS,5    ; Select page 1
+020B 118C           00735           bcf       _SSPIE_P       ; SSP int enable (BANK 1)
+                    00736           BANK0
+020C 1283               M         bcf     STATUS,5    ; Select page 0
+                    00737 
+                    00738 
+                    00739      ;; enable SPI
+                    00740           BANK1
+020D 1683               M         bsf     STATUS,5    ; Select page 1
+020E 158C           00741           bsf       _SSPIE_P  ; SSP int enable (BANK 1)
+                    00742           BANK0
+020F 1283               M         bcf     STATUS,5    ; Select page 0
+0210 0008           00743           return
+                    00744 
+                    00745 
+                    00746 ;*******************************************************************
+                    00747 ;WaitMSec
+                    00748 ;       Delay W number of Msec Routines (255 max)
+                    00749 ;         Actually slightly larger than 1 mS
+                    00750 ;*******************************************************************
+                    00751 
+0211                00752 WaitMSec
+0211 00AC           00753         movwf   bCnt            ;store Msec -> bCnt
+                    00754 
+0212                00755 jWaitMSec0
+0212 0064           00756         clrwdt                  ;clear wdt
+                    00757 
+                    00758 ; TMR1H: 256 uSec tics with maximum of 1/2 rollover = 32.768 msec maximum
+                    00759           Set1HClock bGenClk,4          ; 256 uS
+0213 080F               M           movfw     TMR1H
+0214 3E04               M           addlw     4
+0215 00B3               M           movwf     bGenClk
+                    00760 
+0216                00761 jWaitMSec1
+                    00762           jmp1HNotYet bGenClk,jWaitMSec1
+                        M 
+0216 080F               M           movfw     TMR1H
+0217 0233               M           subwf     bGenClk,W
+0218 3980               M           andlw     0x80
+                        M           jmpZ      jWaitMSec1
+0219 1903               M         btfsc   _Z
+021A 2A16               M         goto    jWaitMSec1
+                    00763 
+021B 0BAC           00764           decfsz    bCnt,F
+021C 2A12           00765           goto      jWaitMSec0
+021D 0008           00766         return
+                    00767 
+                    00768 ;
+                    00769 ;**********************************************************
+                    00770 ;Init
+                    00771 ;         Initialize 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 43
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00772 ;        
+                    00773 ;**********************************************************
+021E                00774 Init                          
+021E 0064           00775           clrwdt                ; required before changing wdt to timer0
+                    00776 
+                    00777      ;; clear peripheral interrupts
+                    00778         BANK1
+021F 1683               M         bsf     STATUS,5    ; Select page 1
+0220 018C           00779           clrf      PIE1_P
+                    00780        
+                    00781      ;; OPTION_REG: PortB Pullups on.
+                    00782      ;; no prescale for WDT -> should always > 7 mSec  ( 18 mS nominal)
+                    00783      ;; Timer 0:  Use 64 prescale for 0.27127 * 64 = 17.361 uSec tics 
+                    00784 
+0221 3045           00785           movlw     B'01000101'        ; Timer0 prescale 64
+0222 0081           00786           movwf     OPTION_REG_P
+                    00787 
+                    00788      ;; clear bank 0 
+0223 3020           00789           movlw     0x20
+0224 0084           00790           movwf     FSR
+0225 0180           00791 jInitClr1 clrf      INDF
+0226 0A84           00792           incf      FSR,F
+                    00793           jmpClr    FSR,7,jInitClr1
+                        M 
+0227 1F84               M         btfss   FSR,7
+0228 2A25               M         goto    jInitClr1
+                    00794 
+                    00795      ;; clear bank 1
+0229 30A0           00796           movlw     0xA0
+022A 0084           00797           movwf     FSR
+022B 0180           00798 jInitClr2 clrf      INDF
+022C 0A84           00799           incf      FSR,F
+                    00800           jmpSet    FSR,7,jInitClr2
+022D 1B84               M         btfsc   FSR,7
+022E 2A2B               M         goto    jInitClr2
+                    00801 
+022F 2243           00802           call      InitIO              ;initalize IO of microcontroller
+                    00803 
+                    00804      ;; configure Timer1:
+                    00805           BANK0
+0230 1283               M         bcf     STATUS,5    ; Select page 0
+0231 3001           00806           movlw     B'00000001'     ; Prescale = 1, Timer enabled 
+0232 0090           00807           movwf     T1CON
+                    00808 
+                    00809         BANK1
+0233 1683               M         bsf     STATUS,5    ; Select page 1
+0234 140C           00810           bsf       _TMR1IE_P      ; timer1 rollover interrupt enable (page 1)
+                    00811         BANK0
+0235 1283               M         bcf     STATUS,5    ; Select page 0
+                    00812 
+                    00813      ;; init output PWM1 ( uses timer2 )
+                    00814         BANK0
+0236 1283               M         bcf     STATUS,5    ; Select page 0
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 44
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00815             ;; Timer2 ( 8 bit timer ) set for 
+0237 3004           00816         movlw    B'00000100'     ; prescale of 1, internal clk, enable timer2
+0238 0092           00817         movwf    T2CON
+                    00818               ; load PWM counter(PR2) with 0x3F ( 8 bit high res mode)
+                    00819               ; this gives a 15.625KHz signal with 4MHz crystal
+                    00820         BANK1
+0239 1683               M         bsf     STATUS,5    ; Select page 1
+023A 303F           00821         movlw    0x3F
+023B 0092           00822         movwf    PR2_P             
+                    00823         BANK0
+023C 1283               M         bcf     STATUS,5    ; Select page 0
+                    00824 
+                    00825 
+                    00826      ;; for testing
+023D 018E           00827           clrf      TMR1L
+023E 018F           00828           clrf      TMR1H
+                    00829 
+                    00830      ;; turn on interrupts
+                    00831         BANK0
+023F 1283               M         bcf     STATUS,5    ; Select page 0
+0240 30C0           00832           movlw    B'11000000'     ; Enable interrupts ( Periphrals only )
+0241 008B           00833           movwf    INTCON
+                    00834 
+0242 0008           00835           return
+                    00836 
+                    00837 
+                    00838 ;; INITIALIZE I/O OF MICROCONTROLLER
+                    00839 
+0243                00840 InitIO
+                    00841           BANK1
+0243 1683               M         bsf     STATUS,5    ; Select page 1
+0244 3004           00842                 movlw    b'00000100'            ;turn on A/D conversion RA0, RA1, RA3  
+0245 009F           00843         movwf    ADCON1_P
+                    00844 
+                    00845     ;; Port A
+                    00846     ;;      0  in     <*>A2D input POT<*>
+                    00847     ;;      1  out(1) 2510 chip select 
+                    00848     ;;      2  in     <*>open<*>
+                    00849     ;;      3  in     <*>open<*>
+                    00850     ;;      4  in     <*>open<*>
+                    00851     ;;      5  out(1) RST 2510 
+                    00852 
+                    00853           BANK0
+0246 1283               M         bcf     STATUS,5    ; Select page 0
+0247 3002           00854         movlw   B'00000010'     ;; initialize Port A outputs 
+0248 0805           00855         movfw   PORTA           
+                    00856           BANK1
+0249 1683               M         bsf     STATUS,5    ; Select page 1
+024A 30FD           00857                 movlw           B'11111101'
+024B 0085           00858                 movwf           TRISA_P                 ;; set Port A
+                    00859 
+                    00860 
+                    00861     ;; Port B 
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 45
+ CAN_Ref Design 
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                    00862     ;;      0  in     Interrupt from 2510
+                    00863     ;;      1  out(1) <*>CS' MCP3201<*>
+                    00864     ;;      2  out(1) <*>CS' 25C04<*>
+                    00865     ;;      3  in     <*>open<*>
+                    00866     ;;      4  in     <*>open<*>
+                    00867     ;;      5  in     RX0BF from 2510 
+                    00868     ;;      6  in     ICD
+                    00869     ;;      7  in     ICD
+                    00870 
+                    00871           BANK0
+024C 1283               M         bcf     STATUS,5    ; Select page 0
+024D 3006           00872         movlw   B'00000110'     ;; initialize Port B outputs 
+024E 0806           00873         movfw   PORTB           
+                    00874           BANK1
+024F 1683               M         bsf     STATUS,5    ; Select page 1
+0250 30F9           00875         movlw           B'11111001'
+0251 0086           00876           movwf     TRISB_P             ;; set Port B
+                    00877 
+                    00878     ;; Port C
+                    00879     ;;      0  in     DIP #1
+                    00880     ;;      1  in     DIP #2
+                    00881     ;;      2  out(0) <*>PWM Out<*>
+                    00882     ;;      3  out(0) SPI clock - master
+                    00883     ;;      4  in     SPI data in
+                    00884     ;;      5  out(0) SPI data out
+                    00885     ;;      6  in     DIP #3
+                    00886     ;;      7  in     DIP #4
+                    00887     
+                    00888           BANK0
+0252 1283               M         bcf     STATUS,5    ; Select page 0
+0253 3000           00889           movlw     B'00000000'
+0254 0087           00890           movwf     PORTC
+                    00891           BANK1
+0255 1683               M         bsf     STATUS,5    ; Select page 1
+                    00892 
+0256 30D3           00893           movlw     B'11010011'
+0257 0087           00894           movwf     TRISC_P          ;; set Port C
+                    00895 
+                    00896           BANK0
+0258 1283               M         bcf     STATUS,5    ; Select page 0
+0259 0008           00897           return
+                    00898 
+                    00899  ifdef ROBUST
+                    00900 ;; robust design - force WDT reset
+                    00901           FILL (goto WDTReset1),(0xFFF-$)
+                    00902 WDTReset1  goto      WDTReset1
+                    00903  endif
+                    00904 
+                    00905 
+                    00906          END
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 46
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+ACKDT                             00000005
+ACKEN                             00000004
+ACKSTAT                           00000006
+ADCON0                            0000001F
+ADCON1                            0000009F
+ADCON1_P                          0000001F
+ADCS0                             00000006
+ADCS1                             00000007
+ADDEN                             00000003
+ADFM                              00000005
+ADIE                              00000006
+ADIF                              00000006
+ADON                              00000000
+ADRES                             0000001E
+ADRESH                            0000001E
+ADRESL                            0000009E
+BANK0                             
+BANK1                             
+BCLIE                             00000003
+BCLIF                             00000003
+BF                                00000000
+BFPCTRL                           0x0C
+BRGH                              00000002
+BitMod2510                        00000090
+C                                 00000000
+CANCTRL                           0x0F
+CANCTRL1                          0x1F
+CANCTRL2                          0x2F
+CANCTRL3                          0x3F
+CANCTRL4                          0x4F
+CANCTRL5                          0x5F
+CANCTRL6                          0x6F
+CANCTRL7                          0x7F
+CANINTE                           0x2B
+CANINTF                           0x2C
+CANSTAT                           0x0E
+CANSTAT1                          0x1E
+CANSTAT2                          0x2E
+CANSTAT3                          0x3E
+CANSTAT4                          0x4E
+CANSTAT5                          0x5E
+CANSTAT6                          0x6E
+CANSTAT7                          0x7E
+CCP1CON                           00000017
+CCP1IE                            00000002
+CCP1IF                            00000002
+CCP1M0                            00000000
+CCP1M1                            00000001
+CCP1M2                            00000002
+CCP1M3                            00000003
+CCP1X                             00000005
+CCP1Y                             00000004
+CCP2CON                           0000001D
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 47
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+CCP2IE                            00000000
+CCP2IF                            00000000
+CCP2M0                            00000000
+CCP2M1                            00000001
+CCP2M2                            00000002
+CCP2M3                            00000003
+CCP2X                             00000005
+CCP2Y                             00000004
+CCPR1H                            00000016
+CCPR1L                            00000015
+CCPR2H                            0000001C
+CCPR2L                            0000001B
+CHS0                              00000003
+CHS1                              00000004
+CHS2                              00000005
+CHS3                              00000001
+CKE                               00000006
+CKP                               00000004
+CNF1                              0x2A
+CNF2                              0x29
+CNF3                              0x28
+CREN                              00000004
+CSRC                              00000007
+CheckCANMsg                       00000025
+D                                 00000005
+DATA_ADDRESS                      00000005
+DC                                00000001
+D_A                               00000005
+EEADR                             0000010D
+EEADRH                            0000010F
+EECON1                            0000018C
+EECON2                            0000018D
+EEDATA                            0000010C
+EEDATH                            0000010E
+EEIE                              00000004
+EEIF                              00000004
+EEPGD                             00000007
+EFLG                              0x2D
+ExchangeSPI                       000000C6
+F                                 00000001
+FALSE                             00000000
+FERR                              00000002
+FSR                               00000004
+GCEN                              00000007
+GIE                               00000007
+GO                                00000002
+GO_DONE                           00000002
+Get2510Status                     00000071
+HardStart                         00000107
+I2C_DATA                          00000005
+I2C_READ                          00000002
+I2C_START                         00000003
+I2C_STOP                          00000004
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 48
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+IDx0                              00000191
+INDF                              00000000
+INTCON                            0000000B
+INTE                              00000004
+INTEDG                            00000006
+INTF                              00000001
+IRP                               00000007
+Init                              0000021E
+Init2510                          000001AA
+InitIO                            00000243
+InitSPIBuf                        000000B5
+InitSPIPort                       000000AB
+IntReturn                         00000011
+IntSPI                            000000F9
+LoadSPIByte                       000000BA
+LoadSPIZeros                      000000BD
+NOT_A                             00000005
+NOT_ADDRESS                       00000005
+NOT_BO                            00000000
+NOT_BOR                           00000000
+NOT_DONE                          00000002
+NOT_PD                            00000003
+NOT_POR                           00000001
+NOT_RBPU                          00000007
+NOT_RC8                           00000006
+NOT_T1SYNC                        00000002
+NOT_TO                            00000004
+NOT_TX8                           00000006
+NOT_W                             00000002
+NOT_WRITE                         00000002
+OERR                              00000001
+OPTION_REG                        00000081
+OPTION_REG_P                      00000001
+OutputPWM                         0000015E
+P                                 00000004
+PAGE0                             
+PAGE1                             
+PCFG0                             00000000
+PCFG1                             00000001
+PCFG2                             00000002
+PCFG3                             00000003
+PCL                               00000002
+PCLATH                            0000000A
+PCON                              0000008E
+PCON_P                            0000000E
+PEIE                              00000006
+PEN                               00000002
+PIE1                              0000008C
+PIE1_P                            0000000C
+PIE2                              0000008D
+PIE2_P                            0000000D
+PIR1                              0000000C
+PIR2                              0000000D
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 49
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+PORTA                             00000005
+PORTB                             00000006
+PORTC                             00000007
+PR2                               00000092
+PR2_P                             00000012
+PS0                               00000000
+PS1                               00000001
+PS2                               00000002
+PSA                               00000003
+PSPIE                             00000007
+PSPIF                             00000007
+ParseCAN                          00000189
+ProcessSPI                        00000208
+R                                 00000002
+RBIE                              00000003
+RBIF                              00000000
+RC8_9                             00000006
+RC9                               00000006
+RCD8                              00000000
+RCEN                              00000003
+RCIE                              00000005
+RCIF                              00000005
+RCREG                             0000001A
+RCSTA                             00000018
+RD                                00000000
+READ_WRITE                        00000002
+REC                               0x1D
+RP0                               00000005
+RP1                               00000006
+RSEN                              00000001
+RTS0                              0x01
+RTS1                              0x02
+RTS2                              0x04
+RX9                               00000006
+RX9D                              00000000
+RXB0CTRL                          0x60
+RXB0D0                            0x66
+RXB0D1                            0x67
+RXB0D2                            0x68
+RXB0D3                            0x69
+RXB0D4                            0x6A
+RXB0D5                            0x6B
+RXB0D6                            0x6C
+RXB0D7                            0x6D
+RXB0DLC                           0x65
+RXB0EID0                          0x64
+RXB0EID8                          0x63
+RXB0SIDH                          0x61
+RXB0SIDL                          0x62
+RXB1CTRL                          0x70
+RXB1D0                            0x76
+RXB1D1                            0x77
+RXB1D2                            0x78
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 50
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+RXB1D3                            0x79
+RXB1D4                            0x7A
+RXB1D5                            0x7B
+RXB1D6                            0x7C
+RXB1D7                            0x7D
+RXB1DLC                           0x75
+RXB1EID0                          0x74
+RXB1EID8                          0x73
+RXB1SIDH                          0x71
+RXB1SIDL                          0x72
+RXF0EID0                          0x03
+RXF0EID8                          0x02
+RXF0SIDH                          0x00
+RXF0SIDL                          0x01
+RXF1EID0                          0x07
+RXF1EID8                          0x06
+RXF1SIDH                          0x04
+RXF1SIDL                          0x05
+RXF2EID0                          0x0B
+RXF2EID8                          0x0A
+RXF2SIDH                          0x08
+RXF2SIDL                          0x09
+RXF3EID0                          0x13
+RXF3EID8                          0x12
+RXF3SIDH                          0x10
+RXF3SIDL                          0x11
+RXF4EID0                          0x17
+RXF4EID8                          0x16
+RXF4SIDH                          0x14
+RXF4SIDL                          0x15
+RXF5EID0                          0x1B
+RXF5EID8                          0x1A
+RXF5SIDH                          0x18
+RXF5SIDL                          0x19
+RXM0EID0                          0x23
+RXM0EID8                          0x22
+RXM0SIDH                          0x20
+RXM0SIDL                          0x21
+RXM1EID0                          0x27
+RXM1EID8                          0x26
+RXM1SIDH                          0x24
+RXM1SIDL                          0x25
+R_W                               00000002
+Rd2510Reg                         00000079
+Read3201                          000000D6
+ReadA2D                           00000170
+ReadAD10                          00000174
+ReadAD20                          00000177
+Reset2510                         000000A5
+Rts2510                           0000009D
+RxIDTable                         0000001B
+RxIDTable_End                     00000020
+S                                 00000003
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 51
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+SEN                               00000000
+SMP                               00000007
+SPBRG                             00000099
+SPBRG_P                           00000019
+SPEN                              00000007
+SPI_BitMod                        
+SPI_Read                          
+SPI_Rts                           
+SPI_WriteL                        
+SPI_WriteV                        
+SPI_WriteW                        
+SREN                              00000005
+SSPADD                            00000093
+SSPADD_P                          00000013
+SSPBUF                            00000013
+SSPCON                            00000014
+SSPCON2                           00000091
+SSPEN                             00000005
+SSPIE                             00000003
+SSPIF                             00000003
+SSPM0                             00000000
+SSPM1                             00000001
+SSPM2                             00000002
+SSPM3                             00000003
+SSPOV                             00000006
+SSPSTAT                           00000094
+SSPSTAT_P                         00000014
+STATUS                            00000003
+SYNC                              00000004
+Set1HClock                        
+SetConfigMode                     00000051
+SetNormalMode                     0000005E
+T0CS                              00000005
+T0IE                              00000005
+T0IF                              00000002
+T0SE                              00000004
+T1CKPS0                           00000004
+T1CKPS1                           00000005
+T1CON                             00000010
+T1INSYNC                          00000002
+T1OSCEN                           00000003
+T2CKPS0                           00000000
+T2CKPS1                           00000001
+T2CON                             00000012
+TEC                               0x1C
+TMR0                              00000001
+TMR1CS                            00000001
+TMR1H                             0000000F
+TMR1IE                            00000000
+TMR1IF                            00000000
+TMR1L                             0000000E
+TMR1ON                            00000000
+TMR2                              00000011
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 52
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+TMR2IE                            00000001
+TMR2IF                            00000001
+TMR2ON                            00000002
+TOUTPS0                           00000003
+TOUTPS1                           00000004
+TOUTPS2                           00000005
+TOUTPS3                           00000006
+TRISA                             00000085
+TRISA_P                           00000005
+TRISB                             00000086
+TRISB_P                           00000006
+TRISC                             00000087
+TRISC_P                           00000007
+TRISD_P                           00000008
+TRISE_P                           00000009
+TRMT                              00000001
+TRUE                              00000001
+TX8_9                             00000006
+TX9                               00000006
+TX9D                              00000000
+TXB0CTRL                          0x30
+TXB0D0                            0x36
+TXB0D1                            0x37
+TXB0D2                            0x38
+TXB0D3                            0x39
+TXB0D4                            0x3A
+TXB0D5                            0x3B
+TXB0D6                            0x3C
+TXB0D7                            0x3D
+TXB0DLC                           0x35
+TXB0EID0                          0x34
+TXB0EID8                          0x33
+TXB0SIDH                          0x31
+TXB0SIDL                          0x32
+TXB1CTRL                          0x40
+TXB1D0                            0x46
+TXB1D1                            0x47
+TXB1D2                            0x48
+TXB1D3                            0x49
+TXB1D4                            0x4A
+TXB1D5                            0x4B
+TXB1D6                            0x4C
+TXB1D7                            0x4D
+TXB1DLC                           0x45
+TXB1EID0                          0x44
+TXB1EID8                          0x43
+TXB1SIDH                          0x41
+TXB1SIDL                          0x42
+TXB2CTRL                          0x50
+TXB2D0                            0x56
+TXB2D1                            0x57
+TXB2D2                            0x58
+TXB2D3                            0x59
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 53
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+TXB2D4                            0x5A
+TXB2D5                            0x5B
+TXB2D6                            0x5C
+TXB2D7                            0x5D
+TXB2DLC                           0x55
+TXB2EID0                          0x54
+TXB2EID8                          0x53
+TXB2SIDH                          0x51
+TXB2SIDL                          0x52
+TXD8                              00000000
+TXEN                              00000005
+TXIE                              00000004
+TXIF                              00000004
+TXREG                             00000019
+TXRTSCTRL                         0x0D
+TXSTA                             00000098
+TXSTA_P                           00000018
+TxIDTable                         00000020
+TxIDTable_End                     00000025
+UA                                00000001
+W                                 00000000
+WCOL                              00000007
+WR                                00000001
+WREN                              00000002
+WRERR                             00000003
+WaitANDeqZ                        0000006A
+WaitMSec                          00000211
+WaitSPIExchange                   000000D2
+Wrt2510Reg                        00000085
+Xmit3201                          00000132
+XmitRA0                           00000137
+Z                                 00000002
+_BODEN_OFF                        00003FBF
+_BODEN_ON                         00003FFF
+_C                                STATUS,0
+_CCP1IE_P                         PIE1_P,CCP1IE
+_CCP1IF                           PIR1,CCP1IF
+_CPD_OFF                          00003FFF
+_CPD_ON                           00003EFF
+_CP_ALL                           00000FCF
+_CP_HALF                          00001FDF
+_CP_OFF                           00003FFF
+_CP_UPPER_256                     00002FEF
+_DC                               STATUS,1
+_DEBUG_OFF                        00003FFF
+_DEBUG_ON                         000037FF
+_HS_OSC                           00003FFE
+_INTE                             INTCON,INTE
+_INTF                             INTCON,INTF
+_IRP                              STATUS,7
+_LP_OSC                           00003FFC
+_LVP_OFF                          00003F7F
+_LVP_ON                           00003FFF
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 54
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+_PD                               STATUS,3
+_PWRTE_OFF                        00003FFF
+_PWRTE_ON                         00003FF7
+_RBIE                             INTCON,RBIE
+_RBIF                             INTCON,RBIF
+_RCIE_P                           PIE1_P,RCIE
+_RCIF                             PIR1,RCIF
+_RC_OSC                           00003FFF
+_RP0                              STATUS,5
+_RP1                              STATUS,6
+_SSPEN                            SSPCON,SSPEN
+_SSPIE_P                          PIE1_P,SSPIE
+_SSPIF                            PIR1,SSPIE
+_T0IE                             INTCON,T0IE
+_T0IF                             INTCON,T0IF
+_TMR1IE_P                         PIE1_P,TMR1IE
+_TMR1IF                           PIR1,TMR1IF
+_TMR2IE_P                         PIE1_P,TMR2IE
+_TMR2IF                           PIR1,TMR2IF
+_TO                               STATUS,4
+_TXIE_P                           PIE1_P,TXIE
+_TXIF                             PIR1,TXIF
+_WDT_OFF                          00003FFB
+_WDT_ON                           00003FFF
+_WRT_ENABLE_OFF                   00003DFF
+_WRT_ENABLE_ON                    00003FFF
+_XT_OSC                           00003FFD
+_Z                                STATUS,2
+__16F876                          00000001
+b2510RegAdr                       0000004A
+b2510RegData                      0000004B
+b2510RegMask                      0000004C
+bBaseRecID                        0000003B
+bCnt                              0000002C
+bGenClk                           00000033
+bGenFlags1                        00000026
+bGenFlags2                        00000027
+bIntSavPCLATH                     00000022
+bIntSaveFSR                       00000021
+bIntSaveSt                        00000020
+bIntSaveW0                        0000007F
+bIntSaveW1                        000000FF
+bIntWork                          00000023
+bL2bV                             
+bNextMsgType                      0000003E
+bPWMValue                         00000037
+bRecCount                         00000041
+bRecIDNext                        0000003C
+bSPICnt                           0000004D
+bSwXmitID                         0000003A
+bV2bV                             
+bWork                             00000028
+bWork1                            00000029
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 55
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+bXmitClk                          00000034
+bXmitID                           0000003D
+d2510BitMod                       0x05
+d2510RTS                          0x80
+d2510Rd                           0x03
+d2510Reset                        0xC0
+d2510Status                       0xA0
+d2510Wrt                          0x02
+dA2DRA0                           B'01000000'
+dA2DRA3                           B'01011000'
+dRelease                          00000005
+dVersion                          00000001
+disableInt                        
+enableInt                         
+iA                                0000002D
+iA2DValue                         00000035
+iB                                0000002F
+iIntWork                          00000024
+iRecID_H                          00000040
+iRecID_L                          0000003F
+iRecValue                         00000038
+iShiftL                           
+iShiftR                           
+iTimer1                           00000031
+iWork                             0000002A
+intInc                            
+jInit5                            00000118
+jInitClr1                         00000225
+jInitClr2                         0000022B
+jIntSPI1                          00000103
+jIntTimer1                        000000EE
+jMain10                           00000158
+jMain8                            0000013E
+jMainLoop                         0000011F
+jParCANRet                        000001A9
+jRxChk11                          0000003A
+jRxChk90                          00000049
+jSetConfigM1                      00000057
+jSetNormalM1                      00000064
+jWaitANDeqZ                       0000006B
+jWaitMSec0                        00000212
+jWaitMSec1                        00000216
+jmp1HDone                         
+jmp1HNotYet                       
+jmpC                              
+jmpClr                            
+jmpFeqF                           
+jmpFeqL                           
+jmpFeqZ                           
+jmpFgeL                           
+jmpFgtL                           
+jmpFleF                           
+jmpFleL                           
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 56
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+jmpFltF                           
+jmpFltL                           
+jmpFneF                           
+jmpFneL                           
+jmpFneZ                           
+jmpNC                             
+jmpNZ                             
+jmpSet                            
+jmpWeqF                           
+jmpWeqL                           
+jmpWeqZ                           
+jmpWgeF                           
+jmpWgeL                           
+jmpWgtF                           
+jmpWgtL                           
+jmpWleF                           
+jmpWleL                           
+jmpWltF                           
+jmpWltL                           
+jmpWneF                           
+jmpWneL                           
+jmpWneZ                           
+jmpZ                              
+pRecDataBase                      00000042
+pSPIBuf                           0000004E
+pSPIBufBase                       0000004F
+skipC                             
+skipClr                           
+skipFeqF                          
+skipFeqL                          
+skipFeqZ                          
+skipFneF                          
+skipFneL                          
+skipFneZ                          
+skipNC                            
+skipNZ                            
+skipSet                           
+skipWeqZ                          
+skipWneZ                          
+skipZ                             
+tb2Nottb                          
+tb2tb                             
+tbNewSPI                          bGenFlags1,2
+tbRC2NowHigh                      bGenFlags1,5
+tbReset                           bGenFlags1,1
+tbRxMsgPend                       bGenFlags1,3
+tbTxMsg                           bGenFlags1,4
+tbWork                            bGenFlags1,0
+toggle                            
+tp2510_CS_                        PORTA,1
+tpA2D_CS_                         PORTB,1
+tpEE_CS_                          PORTB,2
+tpLED                             PORTB,2
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 57
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+tpSwitch_                         PORTB,1
+trABAT                            CANCTRL,4
+trABTF0                           TXB0CTRL,6
+trABTF1                           TXB1CTRL,6
+trABTF2                           TXB2CTRL,6
+trB0BFE                           BFPCTRL,2
+trB0BFM                           BFPCTRL,0
+trB0BFS                           BFPCTRL,4
+trB0RTS                           BFPCTRL,3
+trB0RTSM                          BFPCTRL,0
+trB1BFE                           BFPCTRL,3
+trB1BFM                           BFPCTRL,1
+trB1BFS                           BFPCTRL,5
+trB1RTS                           BFPCTRL,4
+trB1RTSM                          BFPCTRL,1
+trB2RTS                           BFPCTRL,5
+trB2RTSM                          BFPCTRL,2
+trBRP0                            CNF1,0
+trBRP1                            CNF1,1
+trBRP2                            CNF1,2
+trBRP3                            CNF1,3
+trBRP4                            CNF1,4
+trBRP5                            CNF1,5
+trBTLMODE                         CNF2,7
+trBUKT00                          RXB0CTRL,1
+trBUKT01                          RXB0CTRL,2
+trCLKEN                           CANCTRL,2
+trCLKPRE0                         CANCTRL,0
+trCLKPRE1                         CANCTRL,1
+trERRIE                           CANINTE,5
+trERRIF                           CANINTF,5
+trEWARN                           EFLG,0
+trFILHIT00                        RXB0CTRL,0
+trFILHIT10                        RXB1CTRL,0
+trFILHIT11                        RXB1CTRL,1
+trFILHIT12                        RXB1CTRL,2
+trICOD0                           CANSTAT,1
+trICOD1                           CANSTAT,2
+trICOD2                           CANSTAT,3
+trMERRE                           CANINTE,7
+trMERRF                           CANINTF,7
+trMLOA0                           TXB0CTRL,5
+trMLOA1                           TXB1CTRL,5
+trMLOA2                           TXB2CTRL,5
+trOPMOD0                          CANSTAT,5
+trOPMOD1                          CANSTAT,6
+trOPMOD2                          CANSTAT,7
+trPHSEG0                          CNF2,0
+trPHSEG1                          CNF2,1
+trPHSEG10                         CNF2,3
+trPHSEG11                         CNF2,4
+trPHSEG12                         CNF2,5
+trPHSEG2                          CNF2,2
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 58
+ CAN_Ref Design 
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+trPHSEG20                         CNF3,0
+trPHSEG21                         CNF3,1
+trPHSEG22                         CNF3,2
+trREQOP0                          CANCTRL,5
+trREQOP1                          CANCTRL,6
+trREQOP2                          CANCTRL,7
+trRX0IE                           CANINTE,0
+trRX0IF                           CANINTF,0
+trRX0OVR                          EFLG,6
+trRX1IE                           CANINTE,1
+trRX1IF                           CANINTF,1
+trRX1OVR                          EFLG,7
+trRXEP                            EFLG,3
+trRXM00                           RXB0CTRL,5
+trRXM01                           RXB1CTRL,5
+trRXM10                           RXB0CTRL,6
+trRXM11                           RXB1CTRL,6
+trRXRTR0                          RXB0CTRL,3
+trRXRTR1                          RXB1CTRL,3
+trRXWAR                           EFLG,1
+trSAM                             CNF2,6
+trSJW0                            CNF1,6
+trSJW1                            CNF1,7
+trTX0IE                           CANINTE,2
+trTX0IF                           CANINTF,2
+trTX1IE                           CANINTE,3
+trTX1IF                           CANINTF,3
+trTX2IE                           CANINTE,4
+trTX2IF                           CANINTF,4
+trTXB0                            EFLG,5
+trTXEP                            EFLG,4
+trTXERR0                          TXB0CTRL,4
+trTXERR1                          TXB1CTRL,4
+trTXERR2                          TXB2CTRL,4
+trTXP00                           TXB0CTRL,0
+trTXP01                           TXB1CTRL,0
+trTXP02                           TXB2CTRL,0
+trTXP10                           TXB0CTRL,1
+trTXP11                           TXB1CTRL,1
+trTXP12                           TXB2CTRL,1
+trTXREQ0                          TXB0CTRL,3
+trTXREQ1                          TXB1CTRL,3
+trTXREQ2                          TXB2CTRL,3
+trTXWAR                           EFLG,2
+trWAKFIL                          CNF3,6
+trWAKIE                           CANINTE,6
+trWAKIF                           CANINTF,6
+MPASM 02.20.15 Intermediate   CAN_REF.ASM   2-8-2000  13:27:59         PAGE 59
+ CAN_Ref Design 
+
+MEMORY USAGE MAP ('X' = Used,  '-' = Unused)
+
+
+0000 : XX--XXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0040 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0080 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+00C0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0100 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0140 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0180 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+01C0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0200 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+0240 : XXXXXXXXXXXXXXXX XXXXXXXXXX------ ---------------- ----------------
+2000 : XXXX---X-------- ---------------- ---------------- ----------------
+
+All other memory blocks unused.
+
+Program Memory Words Used:   600
+Program Memory Words Free:  7592
+
+
+Errors   :     0
+Warnings :     0 reported,     0 suppressed
+Messages :     0 reported,     0 suppressed
+
+
