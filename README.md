@@ -20,8 +20,8 @@ MCP2551:
 The MCP2551 is a simple chip that interfaces with the CAN bus. This chip is probably not actually needed in this design. I have not tested whether or not it is required. We could probably skip it and connect the MCP2515 directly to another MCP2515 on another node. Pin 6 in the CAN low pin. Pin 7 is the CAN high pin. Pin 8 must be connected to ground via 10K ohm resistor. This pin sets the various modes of the MCP2551 chip. Without this resistor the CAN nodes will not communicate properly. 
 
 CAN Bus:
-To build the CAN bus, two 120 ohm resistors are required. These two resistors connect the high and low CAN bus wires at the termination of each end of the bus. At this point, I do not know a limit on the number of nodes that can be added to the bus without significant collisions. I have tested two nodes. If we have more, we could determine the max number that can be added.
+To build the CAN bus, two 120 ohm resistors are required. These two resistors connect the high and low CAN bus wires at the termination of each end of the bus. At this point, I do not know a limit on the number of nodes that can be added to the bus without significant collisions. I have tested two nodes. If we have more, we could determine the max number that can be added. After trying several different configurations, I've settled on directly connecting the badges. There is no need for the 120 ohm resistors.
 
-I've used the CanaKit UK1300 to program the PICs that I used on my breadboard. I haven't tried the ICSP. I'm going to buy a Pic Kit 3 and test the ICSP.
+I've used the CanaKit UK1300 to program the PICs that I used on my breadboard. The ICSP works on the breadboard I've been developing from. I was not able to test it with Rev 1.0. I used the PICKit 3. 
 
-I will upload the code soon.
+
